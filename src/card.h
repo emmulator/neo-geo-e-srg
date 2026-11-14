@@ -1,4 +1,5 @@
-/* card.h: the AES memory card calls (M6 Task 10). See card.c.
+/* card.h: the AES memory card calls (M6 Task 10; high-score boards Task B2
+ * moved them to the board). See card.c.
  *
  * Only the cart's BIOS RAM + BIOS card function: no ngdevkit library
  * beyond <ngdevkit/memory-card.h>. Runs only at an entry (the first one
@@ -8,18 +9,20 @@
 #ifndef CARD_H
 #define CARD_H
 #include <ngdevkit/types.h>
-#include "best.h"
+#include "board.h"
 
-/* load the best table from the memory card into *b: 1 if a valid table
- * was loaded (the caller copies it into flow_best), 0 otherwise (no
- * card, unformatted, missing slot, or the loaded bytes fail
- * best_valid). Logs the call's answers through card_log. */
-u8 card_load_best(best_t *b);
+/* load the board from the memory card into *b: 1 if a valid board was
+ * loaded (the caller copies it into flow_board), 0 otherwise (no card,
+ * unformatted, missing slot, or the loaded bytes fail board_valid — an old
+ * 'ESRG' best table is one of those). Logs the call's answers through
+ * card_log. */
+u8 card_load_board(board_t *b);
 
-/* save the best table to the memory card: if the first save answers
- * 0x81 (unformatted), FORMAT first, then save again; 0x80 (no card)
- * skips everything. Returns the last save's answer (0 on success). */
-u8 card_save_best(const best_t *b);
+/* save the board to the memory card: if the first save answers 0x81
+ * (unformatted), FORMAT first, then save again; 0x80 (no card) skips
+ * everything. Returns the last save's answer (0 on success). The saved
+ * size is sizeof(board_t), 126 bytes. */
+u8 card_save_board(const board_t *b);
 
 /* a probe-facing log of the card calls this entry made. The MAME probe
  * reads these words from RAM to record the sequence — fresh card: a

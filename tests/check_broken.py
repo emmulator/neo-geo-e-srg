@@ -52,10 +52,58 @@ MIS_BEHIND_END = _SLOTS["MIS_BEHIND_SPRITE"] + _SLOTS["MIS_BEHIND_COUNT"] - 1
 DOME_FIRST, DOME_LAST = _SLOTS["DOME_SPRITE"], _SLOTS["DOME_SPRITE"] + _SLOTS["DOME_COUNT"] - 1
 OVERLAY_FIRST, OVERLAY_LAST = _SLOTS["BROKEN_SLOT_BASE"], _SLOTS["BROKEN_SLOT_AFTER"] - 1
 SHIP_FIRST, SHIP_LAST = _SLOTS["SHIP_SPRITE"], _SLOTS["SHIP_SPRITE"] + _SLOTS["SHIP_COUNT"] - 1
+GROUND_FIRST, GROUND_LAST = _SLOTS["GROUND_SPRITE"], _SLOTS["GROUND_SPRITE"] + _SLOTS["GROUND_COUNT"] - 1
 FRONT_FIRST, FRONT_LAST = _SLOTS["MIS_FRONT_SPRITE"], _SLOTS["MIS_FRONT_SPRITE"] + _SLOTS["MIS_FRONT_COUNT"] - 1
 EXPL_FIRST, EXPL_LAST = _SLOTS["EXPL_SPRITE"], _SLOTS["EXPL_SPRITE"] + _SLOTS["EXPL_COUNT"] - 1
+RIPPLE_PAL_BANK = 44                 # src/ground.h
+RIPPLE_BANKS = 11                    # build/ground_map.h
+
+
+def _defines(path):
+    out = {}
+    for raw in open(path):
+        m = re.match(r"#define\s+(\w+)\s+(.+)", raw)
+        if not m:
+            continue
+        name, expr = m.group(1), m.group(2).split("/*")[0].strip()
+        for k in sorted(out, key=len, reverse=True):
+            expr = re.sub(r"\b%s\b" % k, str(out[k]), expr)
+        try:
+            out[name] = int(eval(expr, {"__builtins__": {}}, {}))
+        except (ValueError, NameError, TypeError, SyntaxError):
+            pass
+    return out
+
+
+def _ripple_header():
+    """(defines, ground_bank, ground_ripple_pal, ground_ripple_rot) from the
+    built build/ground_map.h; the palettes are RGB lists through MAME's DAC."""
+    txt = open(os.path.join(ROOT, "build", "ground_map.h")).read()
+
+    def body(name):
+        m = re.search(r"%s\[[^=]*= \{(.*?)\};" % name, txt, re.S)
+        return m.group(1)
+
+    bank = [[int(x) for x in re.findall(r"\d+", row)]
+            for row in re.findall(r"\{([^{}]*)\}", body("ground_bank"))]
+    words = [int(x, 16) for x in
+             re.findall(r"0x[0-9a-fA-F]{4}", body("ground_ripple_pal"))]
+    pal, i = [], 0
+    for _k in range(RIPPLE_BANKS):
+        per = []
+        for _g in (0, 1):
+            rots = []
+            for _r in range(3):
+                rots.append(npal._bank_rgb(words[i:i + 16]))
+                i += 16
+            per.append(rots)
+        pal.append(per)
+    rot = [[int(x) for x in re.findall(r"\d+", row)]
+           for row in re.findall(r"\{([^{}]*)\}", body("ground_ripple_rot"))]
+    return _defines(os.path.join(ROOT, "build", "ground_map.h")), bank, pal, rot
 
 DOME_X, DOME_Y = lay.d.DOME_X, lay.d.DOME_Y  # the dome box's screen top-left (dome.h)
+DOME_W, DOME_H = lay.d.DOME_W, lay.d.DOME_H  # the box size (geometry.py's knob)
 VIEW = 0                       # the test cart never moves the dome
 # the test cart's broken set (src/main.c cracks_test_broken): 16 top-facing
 # cells of rings 0..4 (0..15) plus 22 rim cells (36..57, the ring-7..9
@@ -86,14 +134,35 @@ def broken_palette_rgb():
     return [tuple(c[:3]) for c in rb.BROKEN_PALETTE]
 
 
+_SHIP_RGB = None
+
+
+def ship_rgb_set():
+    """the hovercraft's palette, from the built assets/ship.pal (the
+    bank the ship's tiles draw through, src/ship_gfx.h's PAL_SHIP)."""
+    global _SHIP_RGB
+    if _SHIP_RGB is None:
+        _SHIP_RGB = set(npal.ship_palette_rgb()[1:])
+    return _SHIP_RGB
+
+
+def is_ship(px):
+    """a pixel of the ship's own palette (the console shares one dark
+    colour, (8,8,8), so the console's own pixels are left out)."""
+    return tuple(px[:3]) in ship_rgb_set() and not npal.is_console_only(px)
+
+
 def parse(fname):
     frames = []
     snap_frame = None
+    camera = {}          # fc -> the cart's real ship.dome_angle (the props')
     for line in open(fname):
         p = line.split()
         if not p:
             continue
-        if p[0] == "F":
+        if p[0] == "P":
+            camera[int(p[1])] = int(p[2])
+        elif p[0] == "F":
             frames.append((int(p[1]), int(p[2]), []))
         elif p[0] == "S":
             frames[-1][2].append(dict(
@@ -102,12 +171,12 @@ def parse(fname):
                 tiles=[int(x, 16) for x in p[6:]]))
         elif p[0] == "SNAP":
             snap_frame = int(p[1])
-    return frames, snap_frame
+    return frames, snap_frame, camera
 
 
 def main():
     snap_png, probe = sys.argv[1], sys.argv[2]
-    frames, snap_frame = parse(probe)
+    frames, snap_frame, camera = parse(probe)
     failures = []
 
     if not frames:
@@ -145,7 +214,10 @@ def main():
     # verification walks only the broken-overlay slots, and the
     # draw-order checks keep the full list
     all_slots = slots
-    slots = [s for s in slots if OVERLAY_FIRST <= s["slot"] <= OVERLAY_LAST]
+    # Dome-scenery Task 2: the overlay band is the one the regenerated
+    # overlays pack (BROKEN_SLOT_BASE..BROKEN_SLOT_AFTER, read from the slot
+    # map), and the run of overlay slots is exactly total_slots long
+    slots = [s for s in slots if OVERLAY_FIRST <= s["slot"] <= OVERLAY_FIRST + total_slots - 1]
     if len(slots) != total_slots:
         failures.append(f"{len(slots)} shown overlay slots, want {total_slots}")
     # walk slot-by-slot: slot k belongs to the picture whose run contains it
@@ -193,8 +265,12 @@ def main():
     black_rgb = pal[BLACK_PAL]
 
     def is_blackhole(px):
-        return abs(px[0] - black_rgb[0]) <= 30 and abs(px[1] - black_rgb[1]) <= 30 \
-            and abs(px[2] - black_rgb[2]) <= 30
+        # the broken window's hole is broken palette index 1, a real colour
+        # the cartridge draws through MAME's DAC as pure black. The old
+        # +-30 tolerance existed while the ship had no near-black pixels;
+        # the hovercraft's dark outline (8,8,8)/(10,10,14) now falls inside
+        # that window, so match the hole's exact colour instead.
+        return tuple(px[:3]) == black_rgb
 
     # per-cell regions on the 320x224 screen. For the coverage checks the
     # region is the overlay's own stone box (the art's exact on-screen
@@ -302,22 +378,17 @@ def main():
             hgt = slot["scb3"] & 0x3f
             if ship_words is None:
                 ship_words = 0
-            # count the ship's warm/light pixels in its 2x2-tile area
+            # count the ship's palette pixels in its 2x2-tile area
             blk = 0
             for yy in range(y0, min(224, y0 + hgt * 16)):
                 for xx in range(max(0, x0), min(320, x0 + 32)):
-                    c = pix[int(xx * sx), int(yy * sy)]
-                    # the ship's palette: bright blue (0,139,238),
-                    # near-white (255,255,222) and amber shades
-                    if (c[0] > 140 and c[1] > 90 and c[2] < 120) or \
-                       (c[0] > 240 and c[1] > 240) or \
-                       (abs(c[0] - 0) <= 20 and abs(c[1] - 139) <= 25 and abs(c[2] - 238) <= 25):
+                    if is_ship(pix[int(xx * sx), int(yy * sy)]):
                         blk += 1
             ship_words += blk
     if ship_words is None:
         failures.append(f"ship slots {SHIP_FIRST}..{SHIP_LAST} not shown in the "
                         "sampled frame — cannot prove draw order")
-    elif ship_words < 30:
+    elif ship_words < 150:
         failures.append(f"ship pixels over the broken cells: only {ship_words} "
                         "— the ship is not drawn intact over the overlays")
     # a front missile over a broken cell keeps its pixels: find a front
@@ -367,12 +438,52 @@ def main():
     # the snapshot outside the front missiles' and explosions' boxes (whose
     # shrunk pixel path is boot-tested separately, not reproduced here).
     aa = np.asarray(im.convert("RGB"))
+    # the play backdrop is the sky (dome-scenery Task 4): the expected
+    # picture starts as the sky, not black, wherever nothing draws. Then
+    # the ground (dome-scenery Task 5) fills the band below the horizon —
+    # the lowest sprite range, so it is pasted FIRST and everything else
+    # draws over it.
     EXPECTED = np.zeros((224, 320, 3), np.uint8)
-    # the palette banks the slots use (dome 1, broken 6, ship 2)
+    EXPECTED[:, :] = npal.SKY_RGB
+    # the palette banks the slots use (dome 1, broken 6, ship 2). Task 19:
+    # the ground tiles use the 11 ripple banks 44..54, one per tile row, so
+    # each ground tile row is pasted through its own bank's palette at the
+    # ship's previous dome angle (the crack cart never turns it: the `P`
+    # records' camera angle, 0, not the TEST angle `da` that turns the
+    # overlay permutation), with the whole (gone 0) palette.
     dome_pal = npal.dome_palette_rgb()
     broken_pal = npal.broken_palette_rgb()
     ship_pal = npal.ship_palette_rgb()
     pal_by_attr = {1: dome_pal, 6: broken_pal, 2: ship_pal}
+    gd, ground_bank, ripple_pal, ripple_rot = _ripple_header()
+    GROUND_Y = gd["GROUND_Y"]
+    GROUND_ROWS = gd["GROUND_ROWS"]
+    prev_da = camera.get(snap_frame, 0)
+    slot_by_num = {s["slot"]: s for s in snap_slots}
+    for c in range(_SLOTS["GROUND_COUNT"]):
+        slot = slot_by_num[GROUND_FIRST + c]
+        for r in range(GROUND_ROWS):
+            bank = ground_bank[c][r]
+            pal = ripple_pal[bank][0][ripple_rot[bank][prev_da]]
+            tile = slot["tiles"][r]
+            npal.paste(EXPECTED, npal.tile_rgb(tile, pal),
+                       c * 16, GROUND_Y + r * 16,
+                       mask=npal.decode_tile(tile) != 0)
+    # dome-scenery Task 12/15: the BACK props are right after the mountains
+    # and below the missiles behind the dome, so they draw over the grass
+    # and under the dome; the FRONT pool draws over the dome and its broken
+    # overlays and under the ship. The probe does not dump their slots;
+    # paste Task 11/15's model picture through the generated prop_pal +
+    # prop_shadow (the same decode check_props.py uses, and the runtime's
+    # blank rows below each picture are already handled by the zoom table:
+    # rows below the picture are skipped).
+    # the props follow the CAMERA, not the overlays' test-only override: on
+    # the crack cart the ship stays parked at cell 27 (dome_angle 0) while
+    # CRACK_ANGLE >= 48 forces a different overlay permutation, so the
+    # probe's P records carry the real angle (`da` is only right at 0).
+    prop_da = camera.get(snap_frame, da)
+    back_pic, back_drawn = npal.props_picture(prop_da, pool=0)
+    EXPECTED[back_drawn] = back_pic[back_drawn]
     # the dome and ship are sticky chains (one driver + followers); the
     # overlays are independent columns. Composite in hardware order (higher
     # sprite slot number draws on top).
@@ -382,9 +493,28 @@ def main():
             bank = (slot["attr"] >> 8) & 0xf
             if bank in pal_by_attr:
                 npal.composite_slot(EXPECTED, slot, pal_by_attr[bank])
+    # Task 15: the front pool sits between the overlays and the ship.
+    front_pic, front_drawn = npal.props_picture(prop_da, pool=1)
+    EXPECTED[front_drawn] = front_pic[front_drawn]
     npal.composite_run(EXPECTED, snap_slots, ship_pal, SHIP_FIRST, _SLOTS["SHIP_COUNT"])
+    # dome-scenery Task 7: the console sits right after the ship (higher
+    # slots, drawn on top); Task 8 lowered its art so 30 of its trim pixels
+    # now fall inside the dome box's bottom corners (y 195..199). The probe
+    # does not dump its slots, so paste the committed generator's own
+    # picture through the generated con_pal at the header's placement.
+    import render_console as rc
+    con_pic = rc.console_picture()
+    con_rgb = [npal.neo_rgb(w) for w in
+               [int(x, 16) for x in re.findall(
+                   r"0x[0-9a-fA-F]{4}", open(os.path.join(ROOT, "build",
+                                                          "console_map.h")).read())]]
+    for cy in range(224):
+        for cx in range(320):
+            idx = int(con_pic[cy, cx])
+            if idx:
+                EXPECTED[cy, cx] = con_rgb[idx]
     # compare within the dome box
-    x0, y0, x1, y1 = DOME_X, DOME_Y, DOME_X + 175, DOME_Y + 127
+    x0, y0, x1, y1 = DOME_X, DOME_Y, DOME_X + DOME_W - 1, DOME_Y + DOME_H - 1
     miss = np.zeros((224, 320), bool)      # boxes to exclude: the front
     for slot in snap_slots:                # missiles + explosions (shrunk, a
         if FRONT_FIRST <= slot["slot"] <= EXPL_LAST:     # separate boot test's subject)

@@ -3,8 +3,9 @@
  *
  * The flow is a small state machine with three states (src/flow.c):
  *
- *   FLOW_TITLE        the title pages: the dome turning, the stars, and the
- *                     title text. Waits until the BIOS sets bios_user_mode 2
+ *   FLOW_TITLE        the title pages: the dome turning on a black
+ *                     backdrop, and the title text. Waits until the BIOS
+ *                     sets bios_user_mode 2
  *                     (a Start press, or Start with a credit), which the
  *                     game loop sees next frame.
  *

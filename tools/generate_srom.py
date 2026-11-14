@@ -182,15 +182,25 @@ FONT57 = {
 }
 
 
-# the fix palette for the text, the icons and the logo (PAL_HUD): index ->
-# RGB. 1..4 the font's top-lit gradient (1 also draws the icons and the old
-# glyphs), 5 its shadow (also the logo's darkest fill), 6..9 the logo's fill
-# from top to bottom (the dome's blues).
+# the fix palette for the title, the icons and the logo (PAL_HUD 7): index ->
+# RGB. Attract Task A1: 1..4 the HUD amber gradient (the title's fill; 1 also
+# draws the icons and the old HUD glyphs), 5 the black outline, 6..9 the
+# logo's gold gradient from top to bottom.
 FIX_RGB = {
-    1: (217, 247, 255), 2: (176, 233, 247), 3: (138, 211, 241), 4: (86, 182, 225),
-    5: (22, 65, 117),
-    6: (86, 182, 225), 7: (52, 152, 203), 8: (38, 117, 169), 9: (22, 86, 138),
+    1: (255, 222, 150), 2: (255, 190, 92), 3: (255, 156, 44), 4: (232, 116, 20),
+    5: (0, 0, 0),
+    6: (255, 226, 140), 7: (255, 190, 80), 8: (240, 150, 40), 9: (200, 104, 16),
 }
+# the in-play HUD's amber (dome-scenery: the console's Elite-style scheme);
+# attract Task A1 keeps it exactly as it was: 1..4 the same amber gradient,
+# 5 its brown shadow, 6..9 the old logo blues (never drawn in play). So the
+# title and the HUD share 1..4; entry 5 and 6..9 differ.
+FIX_RGB_AMBER = dict(FIX_RGB)
+FIX_RGB_AMBER.update({
+    1: (255, 222, 150), 2: (255, 190, 92), 3: (255, 156, 44), 4: (232, 116, 20),
+    5: (64, 28, 4),
+    6: (86, 182, 225), 7: (52, 152, 203), 8: (38, 117, 169), 9: (22, 86, 138),
+})
 ROW_COLOUR = (1, 1, 2, 2, 3, 3, 4)
 SHADOW = 5
 
@@ -207,6 +217,160 @@ def font57_to_pixels(glyph):
         for c in range(5):
             if glyph[r][c] == '#':
                 px[r * 8 + c] = ROW_COLOUR[r]
+    return px
+
+
+def title_glyph_pixels(glyph):
+    """attract Task A1's outlined title glyph (TITLE_FONT_BASE + code): the
+    FONT57 glyph at cols 1..5, rows 1..7, filled with ROW_COLOUR; colour 5
+    exactly on the glyph's 8-neighbourhood inside the tile (so the top
+    outline row is row 0, the bottom row 8)."""
+    px = [0] * 64
+    for r in range(7):
+        for c in range(5):
+            if glyph[r][c] == '#':
+                px[(r + 1) * 8 + c + 1] = ROW_COLOUR[r]
+    for r in range(7):
+        for c in range(5):
+            if glyph[r][c] != '#':
+                continue
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+                    gy, gx = r + 1 + dy, c + 1 + dx
+                    if gy < 0 or gy > 7 or gx < 0 or gx > 7:
+                        continue
+                    is_glyph = (1 <= gy <= 7 and 1 <= gx <= 5
+                                and glyph[gy - 1][gx - 1] == '#')
+                    if not is_glyph:
+                        px[gy * 8 + gx] = SHADOW
+    return px
+
+
+# High-score boards (design 2026-10-29): the title font with a 2-px black
+# outline (the user's pick, mockup option 2), and three glyphs the boards'
+# initials need. TITLE2_STAR / TITLE2_HEART are the codes a stored initial
+# uses for the star and the heart.
+TITLE2_STAR, TITLE2_HEART = 0x01, 0x02
+TITLE2_EXTRA = {
+    '&': [".##..", "#..#.", "#.#..", ".#...", "#.#.#", "#..#.", ".##.#"],
+    chr(TITLE2_STAR): ["..#..", "..#..", "#####", ".###.", ".#.#.", "#...#", "....."],
+    chr(TITLE2_HEART): [".....", ".#.#.", "#####", "#####", ".###.", "..#..", "....."],
+}
+TITLE2_FONT = dict(FONT57, **TITLE2_EXTRA)
+TITLE2_CHARS = sorted(TITLE2_FONT)          # the font's characters, by code
+
+
+def title2_band(glyph):
+    """a glyph's 16 x 9 picture in its line's two fix rows (rows 0..7 the
+    text row, 8..15 the cap row below it): the 5 x 7 glyph at rows 2..8,
+    cols 2..6, in the ROW_COLOUR gradient; colour 5 on its outline, two
+    pixels thick (the 8-neighbourhood ring, then that ring's
+    4-neighbourhood ring). Column 8 is the outline's spill into the cell to
+    the right; nothing spills up, down or left."""
+    ink = [[False] * 9 for _ in range(16)]
+    px = [[0] * 9 for _ in range(16)]
+    for r in range(7):
+        for c in range(5):
+            if glyph[r][c] == '#':
+                ink[2 + r][2 + c] = True
+                px[2 + r][2 + c] = ROW_COLOUR[r]
+    def grow(m, nbrs):
+        return [[m[y][x] or any(0 <= y + dy < 16 and 0 <= x + dx < 9 and m[y + dy][x + dx]
+                                for dy, dx in nbrs) for x in range(9)] for y in range(16)]
+    ring8 = [(dy, dx) for dy in (-1, 0, 1) for dx in (-1, 0, 1) if dy or dx]
+    o2 = grow(grow(ink, ring8), [(-1, 0), (1, 0), (0, -1), (0, 1)])
+    for y in range(16):
+        for x in range(9):
+            if o2[y][x] and not ink[y][x]:
+                px[y][x] = SHADOW
+    return px
+
+
+def title2_spill(glyph):
+    """the glyph's spill column (band column 8) as a 16-tuple of bools"""
+    b = title2_band(glyph)
+    return tuple(b[y][8] != 0 for y in range(16))
+
+
+def title2_profiles():
+    """(the distinct spill columns in TITLE2_CHARS order, code -> index)"""
+    plist, prof = [], {}
+    for ch in TITLE2_CHARS:
+        sp = title2_spill(TITLE2_FONT[ch])
+        if sp not in plist:
+            plist.append(sp)
+        prof[ord(ch)] = plist.index(sp)
+    return plist, prof
+
+
+def title2_cell(ch, left_prof, half, plist):
+    """the 8 x 8 tile (64 indices) of character ch's text row (half 0) or
+    cap row (half 1) when the cell to its left spills profile left_prof
+    (its own outline wins; the spill only adds colour 5 to column 0)."""
+    b = title2_band(TITLE2_FONT[ch])
+    sp = plist[left_prof]
+    out = []
+    for y in range(half * 8, half * 8 + 8):
+        for x in range(8):
+            v = b[y][x]
+            if x == 0 and v == 0 and sp[y]:
+                v = SHADOW
+            out.append(v)
+    return out
+
+
+def title2_tiles():
+    """the text-row block then the cap-row block: tile (idx * NPROF + prof)
+    of each block is TITLE2_CHARS[idx] after a left neighbour of spill
+    profile prof."""
+    plist, _ = title2_profiles()
+    blocks = []
+    for half in (0, 1):
+        for ch in TITLE2_CHARS:
+            for p in range(len(plist)):
+                blocks.append(title2_cell(ch, p, half, plist))
+    return blocks
+
+
+def write_title2_header(path, base):
+    """build/title_font.h: the thick-outline title font's tile numbers.
+    A cell whose character is c and whose LEFT neighbour's character is l
+    (a space at a line's start) shows, in a text row,
+      TITLE2_ROW_BASE + title2_idx[c] * TITLE2_NPROF + title2_rprof[l]
+    and in the cap row below it the same with TITLE2_CAP_BASE. The cell
+    right after a line's last character is a space with that character as
+    its left neighbour (it holds the last glyph's outline spill). A code
+    with no glyph maps to the space (title2_idx and title2_rprof of ' ')."""
+    plist, prof = title2_profiles()
+    idx = {ord(ch): i for i, ch in enumerate(TITLE2_CHARS)}
+    sp_i, sp_p = idx[ord(' ')], prof[ord(' ')]
+    n = len(TITLE2_CHARS) * len(plist)
+    with open(path, 'w') as f:
+        f.write("/* generated by tools/generate_srom.py: the thick-outline title font */\n")
+        f.write("#define TITLE2_NCHARS %d\n#define TITLE2_NPROF %d\n" % (len(TITLE2_CHARS), len(plist)))
+        f.write("#define TITLE2_ROW_BASE %d\n#define TITLE2_CAP_BASE %d\n" % (base, base + n))
+        f.write("#define TITLE2_STAR %d\n#define TITLE2_HEART %d\n" % (TITLE2_STAR, TITLE2_HEART))
+        f.write("static const u8 title2_idx[128] = {%s};\n" % ",".join(str(idx.get(c, sp_i)) for c in range(128)))
+        f.write("static const u8 title2_rprof[128] = {%s};\n" % ",".join(str(prof.get(c, sp_p)) for c in range(128)))
+
+
+TITLE2_BASE = 512          # after the 512 tiles of the 16 KB S ROM's old layout
+
+
+def title_cap_pixels(glyph):
+    """the outlined glyph's cap tile (TITLE_CAP_BASE + code): row 0 holds
+    the outline's bottom row (the glyph's bottom row's 8-neighbourhood one
+    row down); rows 1..7 are blank. It occupies the blank fix row between
+    two title lines."""
+    px = [0] * 64
+    for c in range(5):
+        if glyph[6][c] == '#':
+            for dx in (-1, 0, 1):
+                gx = c + 1 + dx
+                if 0 <= gx <= 7:
+                    px[gx] = SHADOW
     return px
 
 
@@ -264,6 +428,24 @@ def logo_pixels():
                 out[y][x] = 3
             else:
                 out[y][x] = 6 + min(3, (y - top) * 4 // (bot - top + 1))
+    # attract Task A1: the black outline (colour 5) around the logo's lit
+    # pixels, one pixel on the 8-neighbourhood. The outline stays inside
+    # the logo's own 16 x 4 tile block (the art's bounding box leaves a
+    # margin on every side), so no cap rows are needed for the logo.
+    for y in range(H):
+        for x in range(W):
+            if on[y][x]:
+                continue
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+                    ny, nx = y + dy, x + dx
+                    if 0 <= ny < H and 0 <= nx < W and on[ny][nx]:
+                        out[y][x] = SHADOW
+                        break
+                if out[y][x] == SHADOW:
+                    break
     return out
 
 
@@ -288,13 +470,17 @@ def neo_colour(rgb):
 
 
 def write_pal_header(path):
-    """the fix palette as a C header: fix_pal[16] (entry 0 transparent)."""
-    vals = [0x8000] + [neo_colour(FIX_RGB[i]) if i in FIX_RGB else 0 for i in range(1, 16)]
+    """the fix palettes as a C header: fix_pal[16] (the title's gold: the
+    amber gradient 1..4, black outline 5, logo gold 6..9; entry 0
+    transparent) and fix_pal_amber[16] (the in-play HUD's unchanged amber
+    and old logo blues)."""
     with open(path, 'w') as f:
-        f.write("/* generated by tools/generate_srom.py: the text/icon/logo fix palette */\n")
-        f.write("static const u16 fix_pal[16] = {\n    ")
-        f.write(", ".join("0x%04x" % v for v in vals))
-        f.write("\n};\n")
+        f.write("/* generated by tools/generate_srom.py: the text/icon/logo fix palettes */\n")
+        for name, rgb in (("fix_pal", FIX_RGB), ("fix_pal_amber", FIX_RGB_AMBER)):
+            vals = [0x8000] + [neo_colour(rgb[i]) if i in rgb else 0 for i in range(1, 16)]
+            f.write("static const u16 %s[16] = {\n    " % name)
+            f.write(", ".join("0x%04x" % v for v in vals))
+            f.write("\n};\n")
 
 
 def encode_srom_tile(pixels):
@@ -376,7 +562,7 @@ def icon_to_pixels(rows):
     return [1 if (r >> (7 - x)) & 1 else 0 for r in rows for x in range(8)]
 
 
-def generate_ascii_tiles(output_path):
+def generate_ascii_tiles(output_path, title2=False):
     """
     Generate SROM data with ASCII character tiles (codepoints 0-127).
     Uses a simple 5x7 pixel font with 1-pixel border.
@@ -400,10 +586,19 @@ def generate_ascii_tiles(output_path):
             f.write(encode_srom_tile(pixels))
 
         # Tiles 128.. : the HUD icons, the title logo, then zeros up to
-        # tile 199
+        # TITLE_FONT_BASE - 1.
         logo = dict(logo_tiles())
-        assert max(logo) < 200
-        for code in range(128, 200):
+        font_base = _title_h('TITLE_FONT_BASE')
+        cap_base = _title_h('TITLE_CAP_BASE')
+        assert max(logo) < font_base, \
+            "the title font tiles would overwrite the logo"
+        assert max(ICONS) < font_base, \
+            "the title font tiles would overwrite the HUD icons"
+        assert font_base + 128 <= cap_base, \
+            "the title font and cap blocks overlap"
+        assert cap_base + 128 <= 512, \
+            "the title cap block does not fit the 512-tile S ROM"
+        for code in range(128, font_base):
             if code in ICONS:
                 f.write(encode_srom_tile(icon_to_pixels(ICONS[code])))
             elif code in logo:
@@ -411,9 +606,33 @@ def generate_ascii_tiles(output_path):
             else:
                 f.write(b'\x00' * 32)
 
-    # Pad file to valid SROM size (at least 16KB, must be power of 2)
-    min_size = 16384  # 16KB minimum (512 tiles at 32 bytes each)
+        # Attract Task A1: the title's outlined glyphs and their caps, one
+        # tile per ASCII code. A code without a FONT57 glyph (lowercase and
+        # rare punctuation) is blank.
+        for code in range(128):
+            glyph = FONT57.get(chr(code))
+            f.write(encode_srom_tile(title_glyph_pixels(glyph) if glyph
+                                     else [0] * 64))
+        for code in range(128):
+            glyph = FONT57.get(chr(code))
+            f.write(encode_srom_tile(title_cap_pixels(glyph) if glyph
+                                     else [0] * 64))
+
+        # High-score boards: with --title2-header, the thick-outline title
+        # font from tile 512 (the S ROM grows to 128 KB; the old blocks
+        # above stay until the runtime switches to it).
+        if title2:
+            written = cap_base + 128
+            assert written <= TITLE2_BASE
+            f.write(b'\x00' * 32 * (TITLE2_BASE - written))
+            for px in title2_tiles():
+                f.write(encode_srom_tile(px))
+
+    # Pad file to valid SROM size (at least 16KB, a power of 2)
     current_size = os.path.getsize(output_path)
+    min_size = 16384  # 16KB minimum (512 tiles at 32 bytes each)
+    while min_size < current_size:
+        min_size *= 2
 
     if current_size < min_size:
         padding_needed = min_size - current_size
@@ -429,14 +648,17 @@ if __name__ == "__main__":
     parser.add_argument('-o', '--output', default='empty.s1', help='Output file path')
     parser.add_argument('--ascii', action='store_true', help='Generate ASCII character tiles')
     parser.add_argument('--pal-header', help='also write the fix palette as a C header')
+    parser.add_argument('--title2-header', help='also write the thick-outline title font header')
 
     args = parser.parse_args()
 
     if not args.ascii:
         parser.error('--ascii is required (only ASCII generation is supported)')
 
-    generate_ascii_tiles(args.output)
+    generate_ascii_tiles(args.output, title2=bool(args.title2_header))
     if args.pal_header:
         write_pal_header(args.pal_header)
+    if args.title2_header:
+        write_title2_header(args.title2_header, TITLE2_BASE)
 
     print(f"Generated SROM: {args.output}")

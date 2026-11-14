@@ -686,6 +686,35 @@ log's capacity) and the title counter <= 1000 — before emitting any
 records. The AES leg does not need this (its probe starts recording once
 the PC is in cart space, after the BIOS preamble).
 
+## Adding a new object with BSS moves the -DSOUND_TEST cart's RAM log (2026-10-26, Task C2)
+
+- **Symptom:** after `src/collapse.c` joined `SRCS` (the wildcard links it
+  into every cart), the sound-mvs leg failed with 168 garbage records
+  (`S 2 21845 21845 85 85`) and "command 4 never logged" — while the same
+  cart at HEAD passed. The AES sound leg still passed.
+- **Cause:** the `-DSOUND_TEST` cart's `sound_test_log` / `sound_test_n` /
+  `sound_test_fc` live in `flow.o`. `collapse.o`'s static memo (about 350
+  bytes of BSS) is earlier in the link order, so its BSS shifted
+  `flow.o`'s log to a different RAM address. The MVS BIOS leaves
+  0x55/0xAA garbage there; at the new address that garbage eventually
+  passed the sound probe's `cnt <= 32` + first-command gates (the
+  `cnt == 0` branch starts it), so the probe logged garbage and never saw
+  the real sends. HEAD's address was cleared/sane by the time the probe
+  looked.
+- **Fix:** the `-DSOUND_TEST` carts (sound, sound-mvs, sound-game,
+  sound-radar) link a `collapse-soundtest.o` built with `-DSOUND_TEST`,
+  whose `collapse_init`/`collapse_prepare`/`collapse_commit` are empty
+  stubs. With no BSS, `flow.o`'s log keeps its HEAD address. The normal
+  cart and every other test cart link the real `collapse.o`. The stub
+  loses no coverage: the sound legs never play the collapse, and the
+  collapse leg runs the normal cart.
+- **Also:** `tools/render_collapse.py` imports `render_broken.py`, which
+  reads `build/slots.json`; the collapse-map rule must depend on
+  `$(SLOTS_JSON)` or a clean parallel `make` can schedule the collapse
+  before the slot map and fail with "build/slots.json missing". The
+  radar-map rule already had this dependency; the collapse rule now
+  matches it.
+
 ## The BIOS logo moves every boot-time frame number (2026-10-19)
 - **Symptom:** after setting `rom_eye_catcher_mode=2` (no "MAX 330 MEGA" logo), `flow-pages-c`, `flow-mvs`, `flow-mvs-start` and `flow-return` failed: C taps landed on page 2, the pre-coin window never saw page 0.
 - **Cause:** with the logo off the BIOS calls the cart ~450 frames sooner. Measured from the probes' T records: the AES title starts at MAME frame ~24 (was ~477), the MVS title at ~299 (was ~749). Tests keyed on the cart's own frame counter were unaffected; only windows that had to land on the title's first page moved.
@@ -724,3 +753,682 @@ one (Right held + A taps every 11 frames: the model gives 987 at MVS seed
 0xadf9 and 699 at AES seed 0xaede). Confirmed by running each leg and
 replaying the model: the probe's FIRST record (ring, phi) equals the
 model's first spawn for the seed read from RAM.
+
+## A header that includes a generated header must be generated in order (2026-10-22)
+
+Symptom: making `src/slots.h` read `DOME_COLS` from `build/dome_map.h`
+(`#include "dome_map.h"`) made `build/slots.json` wrong on a clean build if
+the slot-map generator ran before the dome's: the include was not evaluated
+and `DOME_COUNT` came out as a literal 11, which happened to agree today but
+would not follow a smaller knob.
+
+Cause: the slots rule's only prerequisite was `src/slots.h`, so the Makefile
+was free to generate `slots.json` before `build/dome_map.h` existed; the C
+compiler never saw this because every C rule waits for `$(GEN_HEADERS)`.
+
+Fix: add `$(DOME_MAP)` as a prerequisite of `$(SLOTS_LUA) $(SLOTS_JSON)` and
+have `tools/gen_slots.py` seed `DOME_COLS` from `tools/geometry.py` (its one
+source) instead of parsing the generated file. Confirmed on a clean build:
+`build/slots.json` has `DOME_COUNT` 11 with the default knob and 10 with
+`DOME_COLS` 10 (and `make test` passes at 10).
+
+## Sprite pictures are 16-px tile boxes: scale the full-dome art, then pad, don't re-clamp (2026-10-22, dome-scenery Task 2)
+
+Symptom: regenerating the missile sheets at 2/3 and re-clamping the dart's
+length in the smaller canvas made the near-front views 3-8 px too short
+(and the mid views too tall): the clamp's "room" is the *canvas*, and the
+dart's foreshortened projected extent does not shrink in the same
+proportion as the dart's nominal length.
+
+Cause: a sprite picture can only be a whole number of 16-px columns and
+tiles, so every level's box is round-up(box0 * 2/3) to 16 px (64 -> 48,
+32 -> 32, 16 -> 16): the art cannot be exactly 2/3 of the full-dome sheet
+on every axis. Drawing the *full-dome* picture (its own clamp, its own
+strokes) and then scaling the geometry by 2/3 reproduces the full-dome
+shape at every view; re-deriving the clamp at the small canvas flattens
+the near views.
+
+Fix: keep the full-dome clamp (room and stroke: box0/16 px), scale the
+drawn length and the stroke by 2/3, centre the result in the tile box;
+snap the header's tip to the nearest lit pixel so the runtime's placement
+vertex is on the picture. Confirmed per view against the old sheets: every
+view is within 2 px of 2/3 the old size except the few near-front m views
+whose 2/3 target is below the 32-px canvas' minimum (the 16-px tile grid
+cannot hold them). The explosion is the same: draw at 64x64, 0.6 px per
+Vectrex unit, then centre in 48x48.
+
+## A convex silhouette's bottom row is a tangent: a flat cut is one unbroken run, not 60 px (2026-10-23, dome-scenery Task 3)
+
+Symptom: the plan's Task 3 proof 2 asks that view 0's lowest lit row span at
+least 60 px after the dome gets a flat base. The flat cut projects to an
+ellipse; its lowest pixel row is the ellipse's tangent point, 4 px wide
+(the approved mockup measures 8 px), and no horizontal cut can make a
+perspective silhouette's bottom row wide.
+
+Cause: for a convex solid seen in perspective, the bottom row of the
+picture is where the silhouette's lower boundary is horizontal - a single
+tangent point, measure zero, never a 60-px run. The wide, straight part of
+the flat base is the ellipse's *widest* row (row 63 here: 116 px), not its
+bottom row. What the flat cut does change is gaps: the 76 cells alone have
+3 runs in rows 88..90 (the old jagged rim); the cut's 25 partial pieces
+fill them, so every row 19..94 of view 0 is one run.
+
+Confirmed: rendering view 0 from the 76 cells only vs the full flat-cut mesh
+gives 3 runs vs 1 at rows 88..90; the full picture's bottom row is 4 px
+(x 62..65) and its lowest >=60 px row is y 88 (64 px); the widest row is
+y 63 (116 px). Stated in the commit as a Plan-deviation, with the measured
+numbers.
+
+## A coloured backdrop breaks every "max channel > 40" lit-pixel test (2026-10-23, dome-scenery Task 4)
+
+Symptom: after the play backdrop became the sky (RGB 120,176,228 -> MAME
+(117,182,233)), the dome, HUD-icon, gameover-draw and flow-pages
+snapshot checks failed with absurd counts: the dome box read 12288 "lit"
+pixels (the whole 128x96 box), the HUD icon cells read 64 each instead of
+18, and the phase-1 "dome gone" snapshot read 12288 lit pixels.
+
+Cause: the checkers' lit predicate was `max(px[:3]) > 40`, which was a
+proxy for "not the black backdrop". The sky is brighter than 40, so every
+backdrop pixel counted as drawn art. The fix is to test against the
+backdrop colour itself: `tests/neo_palette.py` now has `SKY_RGB_WORD`
+0x47be, `SKY_RGB` (neo_rgb of it: (117,182,233)), `BLACK_RGB`, and
+`is_lit(px, backdrop)`; the title snapshots use `BLACK_RGB`, the play ones
+`SKY_RGB`. Confirmed on the hud leg: icon cells went from (64,64,64) back
+to (18,18,18) and the gameover-draw phase-1 box from 12288 to 0.
+
+## A second static backdrop (the grass) breaks every "not the sky" lit test (2026-10-23, dome-scenery Task 5)
+
+Symptom: after the ground block (y 100..223) was added, the dome, HUD-icon
+and gameover-draw snapshot checks counted the grass as drawn art: the dome
+box read 3072 lit samples in the dome's band (the ground fills its lower
+rows), the HUD icon cells read 64 each again (they sit at y 192..199 inside
+the grass), and the gameover-draw phase-1 "dome gone" box read 12288.
+
+Cause: the checkers' lit predicate was "not the sky" (or, before Task 4,
+"not black"); the grass is a second static picture the cart draws with no
+sprite, so any pixel-based "is something drawn here" test that does not
+subtract both backdrops counts it. The fix is `neo_palette.is_grass(px)` /
+`ground_rgb_set()`, which reads the generated `build/ground_map.h`'s two
+ground banks through MAME's DAC; the dome/HUD/gameover scans use `dome_lit`
+(lit and not grass). check_broken's pixel-exact compare paints the ground
+first (it is the lowest sprite slot) before compositing the dome, overlays
+and ship. Confirmed on the hud leg: icon cells went from (64,64,64) back to
+(18,18,18); the dome leg from 3072 lit samples in the box back to 1837;
+check_broken's compare went from 3470 differing pixels to 0.
+
+## A slot map shifted by the grass: stale generated slots.json and hard-coded RADAR0
+
+Symptom: after moving the whole slot map up by 20 (the ground took slots
+1..20, missiles behind from 21), the radar leg failed with "240 radar frame
+slot SCB3 mismatches" and "blip shown but no slot read", and the broken
+leg's pixel-exact compare differed by thousands of pixels while the dome
+looked right on screen.
+
+Cause: two copies of the old map. `tests/check_radar.py` had a hand-written
+`RADAR0 = 157` (now 177), and the probes dofile `build/slots.lua`, which
+the grouped Makefile rule regenerates only when `src/slots.h` is newer, so
+a build that ran before `src/slots.h` was re-written kept the old numbers
+and the probe dumped the wrong slots. Confirmed by regenerating
+(`python3 tools/gen_slots.py build`) and re-running: `DOME_SPRITE` 36,
+`RADAR_SPRITE` 177; both legs then PASSed. Fix: the checker reads
+`RADAR_SPRITE` from `build/slots.json` (the one map), and the slot map's
+generated files must be rebuilt after any slots.h edit.
+
+## A second static band above the dome (the mountains) breaks the "above the box" lit test (2026-10-23, dome-scenery Task 6)
+
+Symptom: the `dome` leg failed with "lit samples inside dome box: 1837,
+above it: 128" right after the mountains were placed at y 52..99. The band
+sits right above the dome box (y 104..199) and its bottom rows (y 96..99)
+overlap the check's 8-row "nothing lit above the box" scan (y 96..103), so
+the mountain colours counted as dome pixels.
+
+Cause: the check's lit predicate subtracted only the sky and the grass; the
+mountain band is a third static picture the cart draws (in its own palette
+bank 9), so `neo_palette.is_mountain(px)` / `mountain_rgb_set()` (reading
+`build/mountain_map.h`'s bank through MAME's DAC) joined `is_grass` in
+`check_snapshot.dome_lit`. Only that one scan overlaps the band: the
+gameover-draw and HUD box scans start at y 104 / y 192, and check_broken's
+pixel-exact compare is inside the dome box, so they need no change.
+Confirmed on the dome leg: above-the-box samples 128 -> 0, inside 1837
+unchanged; the mountains leg's own pixel proof compares 15360/15360 band
+pixels with 0 mismatches.
+
+## The console's amber is the ship's amber: two pictures share a colour word (2026-10-24, dome-scenery Task 7)
+
+Symptom: after the console was placed (y 144..223, all 20 columns), the
+`ship` leg failed with "ship pixels: 180". The ship's own amber palette and
+the console's trim/lamps both go through MAME's DAC to (255, 146, 22)
+(console `con_pal[5]` 0x7f81 is the same word as one of the ship's amber
+shades), so `check_snapshot`'s colour-only `amber(px)` counted the panel's
+static trim under the ship.
+
+Cause: a colour predicate cannot tell which palette bank drew a pixel. The
+console is scenery, not the ship, so the fix is to subtract the console
+bank's colours from that one predicate (`neo_palette.is_console_only`), the
+same way the grass and the mountains were subtracted from the dome's lit
+scan. Confirmed on the ship leg: 180 -> 52 pixels, centre y 189 -> 152; the
+ship's real count (52 at the start cell) and the console's own pixel proof
+are unchanged.
+
+The same collision hit the ground leg's shadow proof: the console's 20
+column boxes span y 144..223 across the whole width, so the old "right of
+x 225" window had no uncovered shadow pixels left. The fix there is the
+console's generated picture, not its boxes: a pixel under a console box is
+still visible wherever that column's art is transparent
+(`render_console.console_picture()[y, x] == 0`), 850 art shadow pixels
+remain uncovered (668 right of x 225), and the 50-pixel twin/plain proof
+still passes 50/50. Confirmed on the ground leg (0 -> 50 picked after the
+change).
+
+## A lowered console's wing trim enters the dome box's bottom corners (2026-10-24, dome-scenery Task 8)
+
+Symptom: after the console art was lowered (the wings' top edge y 182, the
+columns' first tile row y 176), two checkers failed on their static-scenery
+predicates even though the game was unchanged: the `gameover-draw` leg saw
+"30 lit pixels in the dome box" on a GAME OVER with the dome hidden, and the
+`cracks` leg's pixel-exact compare saw 30 px differ in the dome box.
+
+Cause: the new console picture reaches y 195..199 at x 96..100 and x
+219..223 — the dome box's bottom-left and bottom-right corners (the box is
+x 96..223, y 104..199). The Task 7 art stopped at y 204 on those columns (its
+strip), so no console pixel had ever been inside the box. Both checkers had
+already learned to subtract the grass from the box; the console is the same
+kind of static picture (its own palette bank, no shared colour words with the
+dome or the grass), so the fix is `neo_palette.is_console_only(px)` in
+`check_gameover_draw.dome_lit_pixels` (30 -> 0 lit) and the generator's own
+opaque picture in `check_broken`'s expected composite (30 px differ -> 0).
+Confirmed on both legs; the console's own pixel proof is unaffected.
+
+## The amber HUD is the ship's amber: a whole-screen ship scan counts the score (2026-10-24, dome-scenery Task 9)
+
+Symptom: after the in-play HUD moved to the amber fix palette, the
+`ship-top` leg failed with "ship pixels: 55 (whole ship ~36, half ~18:
+>= 28), centre y 150 (peak: < 131)" although the ship was at the peak.
+
+Cause: `check_snapshot.ship_centre_y` scanned every row of the screen in
+the dome's columns for "amber" (r > 150, g > b + 50), and the in-play
+score's fix row 28 (screen y 208..215) now draws in the amber bank, whose
+(241,109,14)/(255,160,38)/(255,190,86)/(255,225,152) pass that predicate.
+The scan counted 16 score pixels below the dome box and pulled the centre
+down. (The blue bank's 1..5 did not pass it, so the leg passed before.)
+Fix: scan only the DOME BOX's y span (DOME_Y..DOME_Y+DOME_H-1), where the
+ship always lives — the HUD row is below the box's bottom (199) — and not
+by colour, because the ship's palette and the amber HUD share (255,225,152)
+and (65,22,0). Confirmed on both legs: ship 52 (centre 152), ship-top 36
+(centre 117), the documented whole-ship counts. The `dome-lift` check
+already excluded the score by position (x 128..191, y 208..215).
+
+## The boot test runs its legs in parallel (2026-10-24)
+
+`make boot-test` now runs scripts/boot_test_all.sh: every leg in its own
+`build/boot-legs/NN-MODE/` (BOOT_OUT), half the cores at a time, outputs
+printed in order: ~2 min instead of ~13. A single leg
+(`scripts/boot_test.sh MODE`) still writes build/boot. A checker must find
+its files from its own leg's directory (`$OUT`, the directory of the
+`snap.png` it is given), never by walking up: check_gameover_draw and
+check_ship_respawn looked two levels up (all of build/), which only worked
+while every leg shared build/boot, and picked another leg's snapshot once
+they didn't. Legs that share state (the best-mvs and best-aes groups) are
+one job that runs its legs in order; a new leg goes in the LEGS list in
+boot_test_all.sh.
+
+## An opaque sprite above a static picture moves that picture's coverage bound (2026-10-24)
+
+Symptom: after Task 10 turned the radar's frame into a mostly-opaque
+scanner disc, the `console` boot leg failed with "only 9463 of 10740 opaque
+console pixels compared (need at least 90%)" while its pixel comparison
+still had 0 mismatches.
+
+Cause: the checker's anti-vacuity bound compared against the panel
+picture's total opaque pixel count, subtracting only the pixels the slots
+above it really draw. The radar frame's new fill/rings/bezel are opaque
+(index 2..4), so they legitimately cover 1064 panel pixels (plus 213 more
+from the sticks/headings), and 88.1% of the whole picture was all that was
+left to compare. Nothing was actually wrong with the panel.
+
+Confirmed by rebuilding the same probe dump with the checker: 10740 opaque
+panel pixels, 1277 covered by the slots above (1064 inside the radar's
+64x32 box, 213 outside it), 9463 compared, 0 mismatches.
+
+Fix: keep the 90% bound but take it over the pixels nothing above covers
+(`opaque - covered`), not the picture's total. The rule the bound encodes
+— every panel pixel not hidden by a sprite is compared — is unchanged;
+only the denominator follows the art. Do not lower the percentage.
+
+## Python's round() is banker's rounding: reproduce it exactly, not with half-up (2026-10-25, dome-scenery Task 11)
+
+The props generator places each picture with `round(ax * k)` and
+`round(16 * k)` on exact floats, and Python's `round()` rounds half to
+**even** (`round(0.5) = 0`, `round(1.5) = 2`). C's `(n + half) / den`
+(half-up) disagrees at every exact .5 (5-12 mismatches over the props'
+anchors), and a 16-bit fixed-point `K = round(se * 65536 / ppu)` table
+loses the numerator's remainder and breaks ties differently (1071).
+Exact instead: keep the true numerator (`n = a * se`, fits u16 here),
+`q = (n * 10923) >> (18 + lod)` (= `n / (24 << lod)`, exact to n 24576,
+one `mulu.w`, no `divu`), then the remainder decides the half, a tie to
+even. Checked bit-exact for se 0..96, a 0..256, all three LODs.
+
+## A shrunk sprite's pixels come from the BIOS zoom tables, not `i*16/(hz+1)` (2026-10-25, dome-scenery Task 12)
+
+Symptom: the props' pixel proof (Task 12) failed 928 of 3594 compared
+pixels although every SCB word matched Task 11's model. The expected image
+had been built the way `tools/render_props.compose()` previews it — art
+column `i * 16 // (hz + 1)` for drawn column i, art row
+`line * 256 // (v + 1)` for box line — and that is a linear resample, not
+what the LSPC does.
+
+Cause: horizontal shrink is a 16-bit mask (`ZOOM_X` in
+`tools/render_radar.py`, decoded from MAME's `zoom_x_tables`): the drawn
+box column k reads the art column of the k-th set bit, so hz $B (12 px)
+reads art cols 0,1,2,3,4,5,8,9,10,11,14,15 — not 0,1,3,4,5,6,8,9,10,12,13,
+14. Vertical shrink is the BIOS `000-lo.lo` table (`_ZOOM_Y[(vz << 8) |
+line]` gives the SCB1 row and the art row). The preview is an
+approximation; the runtime is exact.
+
+Confirmed: rebuilding the expected image from those tables gave 0
+mismatches on 3678 compared pixels (the same probe dump). The checker now
+imports `render_radar`'s tables, so the proof is against the hardware.
+The radar tests had already documented the tables; the props' generator
+preview did not, and copying its sampler was the trap.
+
+## A checker's sprite box must wrap SCB4's 9-bit X at 512 (2026-10-25, dome-scenery Task 17)
+
+Symptom: the mountains' pixel proof compared all 15360 band pixels and
+reported 2401 mismatches after the towns band was added, although the band
+drew correctly on screen. The checker's `covered()` used each sprite box's
+`SCB4 >> 7` as a plain screen x, so the band chain's driver at X 509 (the
+9-bit form of `-3`) was treated as starting at x509 and its 21 columns were
+all off-screen.
+
+Cause: SCB4's X is 9 bits and wraps at 512. A column at bx covers screen x
+when `(x - bx) mod 512` is inside its 16-px width (so bx 509 covers x0..12),
+and each sticky follower advances `(x + 16) & 0x1ff`, not `x + 16`. With
+both fixed the mountains checker compares its still-visible 5120 px with 0
+mismatches. The runtime itself was never wrong; only the Python box model
+was.
+
+## A signed 32-bit `/ 5` becomes a `__divsi3` call; cast the numerator to u16 (2026-10-25, dome-scenery Task 17)
+
+Symptom: `(16 * da + 2) / 5` in the band's scroll compiled to a `jsr
+__divsi3` libgcc call, not a 16-bit divide. `int` is 32-bit on this
+toolchain, so the signed expression was a 32-bit divide.
+
+Fix: cast the numerator to `u16` first. gcc then knows the dividend fits
+16 bits and strength-reduces the constant `/ 5` to one `mulu.w #-13107`
+plus a swap/shift (objdump: no `__divsi3`/`__udivsi3`). The quotient is
+the same for all 240 angles (tests/band_model.py). Check any new divide
+with `objdump -r` for `__divsi3`/`__udivsi3`; a libgcc call is a
+per-frame cost the plan does not budget.
+
+## A commit after vblank leaves the VRAM one frame behind the cart's model (2026-10-25, dome-scenery Task 18b)
+
+Symptom: after the missiles/radar moved to the vblank commit, the radar
+boot-test compared frame fc's VRAM with the model at fc and failed: the cart's
+radar_t at frame fc was already prepared, but the commit at the start of fc had
+written frame fc-1's prepared state.
+
+Fix: the radar probe records the previous frame's cart radar_t (the `b`/`r`
+lines) and check_radar.py compares the VRAM/palette/pixels with frame fc-1.
+The same offset already applied to the props; any per-frame commit after
+vblank needs it. State the offset in the commit.
+
+## A generated header's unused static-const tables warn; scope the diagnostic around the include (2026-10-25, collapse Task C1)
+
+Symptom: including `build/collapse_map.h` in src/dome.c for Task C1's ruin
+raised `warning: 'fire_pal' defined but not used [-Wunused-const-variable=]`
+(and one per unused table) even though the header is generated and the rest
+of its tables were deliberately left for Tasks C2-C4; the gate forbids
+warning lines.
+
+Cause: the generator emits every table as `static const`, and `-Wall`'s
+`-Wunused-const-variable` warns for each file-scope static that the including
+translation unit never references. (`ruin_tile`/`ruin_pal` are used, so only
+the C2-C4 tables warn.)
+
+Fix: wrap the include in `#pragma GCC diagnostic push` /
+`ignored "-Wunused-const-variable"` / `#pragma GCC diagnostic pop`, so only
+the generated header's unused tables are quiet. Confirmed by rebuilding the
+normal and GAMEOVER_DRAW_TEST carts (no warnings; the ruin's tables still
+reach the ROM). Do not suppress it globally — only around the generated
+include.
+
+## Blanking SCB1 tile rows: write only the tile words with VRAMMOD 2 (2026-10-25, collapse Task C3)
+
+Need: Task C3 blanks the fragment slots' SCB1 rows 2..31 on the collapse's
+first frame: 46 slots x 30 rows. Writing the normal tile+attribute pair is
+2760 VRAM words; the tile-only form is 1380.
+
+Fix: the rows are invisible when their tile is the part's blank tile
+(COLLAPSE_TILE_BASE + 0): palette index 0 is transparent whatever the stale
+attribute word says. Set `REG_VRAMMOD = 2` and write only each row's tile
+word (the address steps over the attribute), halving the blanking to 1380
+words. The fragment commit measured 1518 words (1380 blank tiles + 138
+SCB2/3/4) at vpos 16..78; the whole collapse commit on that frame (fragments
++ the 528-word fire blanking) was 2046 words at vpos 16..95 (80 lines). The
+collapse leg checked all 1380 rows as COLLAPSE_TILE_BASE, and the centred
+framemark's worst span is 167 (the collapse frame 167 at fc 8360), no
+dropped frames. Only valid for a transparent tile; never skip the
+attributes of a visible tile.
+
+## The collapse's first-frame prepare must stay short: cracks_show hides the overlays after it (2026-10-25, collapse Task C4)
+
+Need: Task C4's first collapse frame originally staged the initial hidden
+SCB2/SCB3/SCB4 of all 73 collapse slots plus the first 50 blank rows in
+`collapse_prepare`. That pushed `src/cracks.c`'s one-time overlay hide
+(which runs after `collapse_prepare` in `game_frame`) to vpos 135, inside
+the old overlays' visible span (SCB3 tops 109..124 -> screen lines
+125..140). C3's tear proof (and the smoke/puff taps) flagged the hide as a
+tear at fc 8359, even though the hide itself is safe.
+
+Fix: the first frame stages no hidden words. Set the memos to the hidden
+values in `reset_*`, set `initial_hides`, and write the initial
+SCB2/SCB3/SCB4 of every collapse slot directly in that frame's vblank
+commit (219 words). Start the one-time blanking at f 1 with 52 rows a frame
+(2080 > 2049), not f 0, so it still finishes at f 40. Measured: cracks'
+hide now runs at vpos 111..113, before the old overlays' first line (vpos
+125); the f 0 commit is 219 words; the worst collapse
+commit is 546 words, 33 lines at fc 8401; the centred framemark's collapse
+worst dropped from 167 (fc 8360) to 156 (fc 8359), and the full collapse
+leg passes with 0 puff/smoke tear frames.
+
+## MAME's snapshot at frame n shows frame n-1's display, not the VRAM read at n (2026-10-26, attract A1)
+
+Symptom: the flow-pages title pixel proof compared the PNG taken at a page
+PIN frame with the FIXMAP rows decoded in that same frame. Every expected
+text fill pixel was black: the F record already held the new page's
+TITLE_FONT_BASE/TITLE_CAP_BASE tiles, but the snapshot still showed the
+previous page (the page-1 PIN's PNG showed page 0; page 0's first PIN PNG
+was the blank pre-title frame).
+
+Cause: MAME's `machine.video:snapshot()` at frame n captures the display
+of frame n-1, while a Lua `vread()` of FIXMAP at frame n sees the cart's
+just-written VRAM. The two are one frame out of step at a page turn.
+
+Fix: `scripts/flow_probe.lua` schedules the PIN's C block/snapshot two MAME
+frames after the PIN (`pending_dump = { at = n + 2, page = page }`) and
+takes it only if the page is still the scheduled one. The rows do not
+change in those two frames: page 0's prompt is still PRESS START at t 2,
+and a text page's rows do not depend on t. The proof then read 0
+mismatches: page 0 frame 28 = 272 text fill (amber 1..4) / 661 text
+outline (black) / 1152 logo fill (gold 1/3/6..9) / 704 logo outline
+(black); page 1 frame 323 = 449 text fill / 1081 outline.
+
+## A MAME notifier can catch the demo mid-frame; log on the cart's hash frame (2026-10-26, attract A3)
+
+`demo_probe.lua` reads `demo_dbg_fc` and the demo's state in a MAME
+frame notifier, but the cart may be between `demo_input` (which bumps
+`demo_dbg_fc`) and `game_frame` / `demo_hash_frame`. Then the fields are
+one frame ahead of the hash and a sampled record cannot be aligned by
+hash. Export the cart-side `demo_dbg_hash_fc` (set to `demo_dbg_fc` at
+the end of `demo_hash_frame`) and log a D line only when it equals
+`demo_dbg_fc`; the epoch hash still covers every frame, including the
+one or two the notifier misses at an epoch's start.
+
+## A staged title commit is one vblank behind; the drawn rows use t-1 (2026-10-26, attract A2)
+
+With the title's rows staged in `title_frame` after the vblank and written
+by `title_commit` in the next vblank, the FIXMAP read at frame n shows the
+state that produced it, while the T record's RAM read is the new state:
+one title frame ahead. Compare the drawn rows with `t-1` (and, on a turn
+with t 0, the previous page's t 294). The row-28 MVS countdown likewise
+shows the timer byte read at n-1. The entry's two-vblank scene setup costs
+two MAME frames; advancing `title_t`/`title_seed_t` by 2 keeps the page
+timing and the Start seed at their pre-A2 values (flow's Start seed
+0xa876; the AES 600 Start's 0xaede).
+
+## A MAME write tap gives the absolute address and a byte port's value in both halves (2026-10-26, attract A4)
+
+Symptom: the REG_SOUND write tap logged `data` 0x0404/0x0808 and
+`offset` 0x320000, so a filter for commands 4..8 matched nothing; and
+`install_write_tap(0x320000, 0x320000, ...)` aborted with "end address has
+low bits unset, did you mean 320001?". Cause: MAME's tap callback receives
+the ABSOLUTE address (not an offset from the range start), and a byte port's
+`move.b` reaches it as the 16-bit value with the byte duplicated in both
+halves. Confirmed by logging every write (`W 441 3276800 2056 ...`) and
+masking `data & 0xff` to 8. Fix: tap the odd end 0x320000..0x320001, test
+the absolute offset, and use the low byte.
+
+## On MVS a coin re-enters the cart at main_mvs_title and resets .bss (2026-10-26, attract A4)
+
+Symptom: after the demo-sound probe inserted a coin and pressed Start five
+frames later, the cart's demo epoch jumped back to 1 (`E 5635 3 1 1 1`) and
+the game never began. Cause: on MVS the BIOS re-enters the cart at
+`main_mvs_title` (the post-coin title) after the coin, which zeroes `.bss`
+and restarts the demo; a Start pressed before that entry is lost. Confirmed
+by the E records and by the game starting at cart fc 4 with command 4 at
+MAME 5640 once the probe waited for the re-entry (epoch 1 again) before
+pressing Start. Fix: coin, wait for the epoch to return to 1, then Start.
+
+## The ship's staged SCB1/SCB3 commit is one vblank behind; sample the next frame (2026-10-26, stopper-spider S2)
+
+`ship_gfx_prepare` chooses the picture from the state after frame N and
+stages the SCB1 tiles plus SCB3 Y; `ship_gfx_commit` writes them in the
+vblank at the start of frame N+1. So the slots read at frame N show the
+picture chosen for the state after N-1. The `spider` leg compares frame N's
+SCB1 with `ship_anim_tile[lat][frame_of(state after N-1)]`, and
+`ship-respawn` dumps the first respawn picture at the respawn frame + 1
+(3806, not 3805) and checks the model state at dump-1. Sampling the respawn
+frame itself read the hide's SCB3=0 and the old pose's tiles, which looked
+exactly like a failed respawn.
+
+## The first attract page is not a full demo cycle; the next page is (2026-10-26, stopper-spider S2)
+
+The first entry's page 0 has 2652 demo frames (dfc 1..2652), because the
+0-page turn resets `demo_fc` to 0 and the restart frame's `demo_input`
+bumps it to 1 as epoch 2. The next page 0 runs the full `DEMO_FRAMES` =
+2655 frames (dfc 1..2655). To prove one full demo script cycle, let epoch 2
+run out and press Start on epoch 3; epoch 1's 2652 frames do not cover the
+whole script.
+
+## sox at the WAV's own rate is bit-identical; synth_sfx.py needs its OUTDIR (2026-10-27, rockets-and-sounds R1)
+
+`sox in.wav -r 18500 out.wav` leaves an already-18500 Hz mono WAV
+byte-for-byte identical (`cmp` on all five R1 synth WAVs: move/jump/fire/
+hit/crack). So the V ROM's sample bytes are the ADPCM-A encoding of
+`tools/synth_sfx.py`'s own output, not a resampled copy; the V ROM test
+encodes `build/sfx-synth/*.wav` and compares directly. `tools/synth_sfx.py
+OUTDIR` also assumes OUTDIR exists (unlike `tools/render_sfx.py`, which
+makes it), so the Makefile and the host test create it first.
+
+## An h-flipped sprite samples art column `15 - col`, not `col` (2026-10-27, rockets-and-sounds R2)
+
+Symptom: a pixel-exact rocket check against the SCB1 art and the BIOS
+`ZOOM_X_COLS` table failed on every h-flipped missile (111 of 126 pixels at
+one snapshot), even though the tile numbers and position matched the model.
+Cause: SCB1 odd-word bit 0 mirrors each 16-px tile before the horizontal
+zoom samples it, so the art column for screen offset `j` is
+`15 - ZOOM_X_COLS[hz][j]`; the separate column-order reversal
+(`sc = cols-1-c`) only chooses which tile is fetched. Confirmed by decoding
+both front missiles with `15 - artcol` and getting 0 mismatches at the
+snapshot's LSPC counter.
+
+## The MAME notifier can miss the demo's heaviest frame; the cart hash covers it (2026-10-28, attract D1)
+
+Symptom: the spider boot-test's full-cycle check failed on the new demo
+player with `epoch 2: 2654 frames`, though the cart ran all 2655: the D
+records were missing dfc 507, the demo's worst work frame (263 scanlines).
+Cause: the frame notifier sampled before the cart's title frame 507
+completed when that frame overran the MAME frame boundary, so the next
+sample saw dfc 508. Confirmed by running the spider leg on the pre-D1
+`flow.c`/`softdip.c` (the same miss) and by reading the cart's
+`demo_dbg_hash` at dfc 2655 = `0x6d11f0ae`, the model's full-cycle hash.
+Fix: the spider probe logs that hash and the checker accepts a full cycle
+when the last logged dfc's hash equals the model's; the animation check
+still runs on every logged D line (5500 displays, 0 bad tiles).
+
+## P1: the demo's props budget can trade frame time for a sprite-census overrun (2026-10-28, title-frame P1)
+
+The props layout is the demo title frame's largest cost (~110 lines) and
+the props commit writes the changed columns (~50-70). Budgeting both by
+vpos (prepare only while the frame has used <=70 lines, commit only while
+<=60) cut the worst cycle frame from 290 to 199 lines. But a skipped props
+update keeps the previous angle's SCB3 heights, and a long lag put 98
+sprites on one line (the hardware limit is 96) even though the correct
+layout has 80. A prepare budget of 68 fixed the span but still left the
+98-sprite frame; 70 is the measured point that keeps the census at 93 and
+the worst frame at 199. Budget the props only after checking the census,
+not just the span.
+
+## Press Start on the cart's title frame count, not a MAME frame (2026-10-28, props-table P2)
+
+Symptom: on the boot-test's fixed MAME Start (600/1200/1400/1800), P2's
+cheaper title frames moved the game's missile seed: title_seed_t was 577 at
+MAME 600 instead of HEAD's 575 (mis_seed_used 0xaea0 vs 0xaede), so the
+calibrated collapse/radar/flow/best legs missed their GAME OVER frames.
+Cause: the game seeds from mis_seed_from(title_seed_t at the Start), and
+title_seed_t is the cart's title frame count; a fixed MAME press lands on a
+different title frame when the title's work changes. Confirmed with the
+flow/collapse probes: the seed is one more than the title_seed_t read at
+the MAME frame's start, because the notifier runs before that frame's
+title_frame increments the counter. Fix: scripts/start_game.lua and
+scripts/mvs_input.lua press on title_seed_t (its nm address) at HEAD's title
+count (575 on AES; 280 after the MVS coin), accounting for that one-frame
+offset. The title entry's props_show also became cheap and started the
+title two MAME frames early (title_t 7 vs HEAD's 5 at MAME 31, which the
+flow-return proof checks); a two-vblank wait in the title entry restores
+HEAD's title start.
+
+## A downstream tile-count change needs its upstream generator as a Makefile prerequisite (2026-10-28, H4)
+
+Symptom: after the 8-heading hovercraft made the ship part 20,032 tiles
+(was 2,560), `make cart` rebuilt the ship, missiles and broken parts but
+left `build/radar_map.h` at 26,757 (`RADAR_FRAME_TILE_BASE`) instead of the
+new 44,229, so `tests/test_radar_render.py` failed with
+`26757 == 44229` and the cart would fetch the radar art at the old absolute
+tile numbers. Cause: `tools/render_radar.py` imports `render_broken` (which
+imports `render_hovercraft`) to compute its base, but the Makefile's
+`$(RADAR_MAP) ... &:` rule listed only `render_radar.py`, `render_broken.py`,
+`src/radar.h` and the slot JSON — not `render_hovercraft.py` (nor the broken
+map/part it derives from), so make considered the old radar output current.
+Confirmed by the timestamps (`build/radar_map.h` older than
+`tools/render_hovercraft.py`) and by rebuilding after adding those
+prerequisites: the header and the radar c1/c2 parts regenerated at the new
+base and the test passed. Lesson: a generator that imports another generator
+for a tile base must name that generator (or its generated header) as a
+Makefile prerequisite; otherwise a tile-count change silently leaves every
+part after it at the old absolute numbers.
+
+## A packed struct with a 3-byte array before a u32 misaligns the 68000 (2026-10-29, B1)
+
+Symptom (caught by design, before it ran): a `board_entry_t` planned as
+`u8 init[3]; u32 score10;` with `__attribute__((packed))` would put the
+u32 at an odd byte offset in every other entry (stride 7: 4 + 7k + 3).
+Cause: the 68000 raises an address error on an odd 16/32-bit access, so a
+field read/write there faults even though the host (x86) tolerates it.
+Confirmed with a host `offsetof` build: adding one explicit pad byte per
+entry puts every `score10` at 8, 16, ..., 120 and `sum` at 124, all even,
+and `sizeof(board_t)` is 126 on both builds. Lesson: a packed wire format
+that mixes byte arrays and u32s needs an explicit pad (or a reordered
+layout) so every multi-byte field sits on an even 68000 offset; "packed"
+does not make a misaligned u32 safe.
+
+
+## The AES card keeps saved bytes in order; MVS saveram word-swaps them (2026-10-30, B2)
+
+The AES `card.neo` image holds the cart's saved bytes as written: after the
+first best-aes run the 126-byte board's `ESR2` magic was at file offset 320
+as big-endian `45 53 52 32`, and one `bios_card()` save/load of
+`sizeof(board_t)` (126 bytes) worked (the entry LOAD answered 0x81, the
+save 0x81, FORMAT 0, SAVE 0). The MVS `saveram` file stores each 16-bit
+backup-RAM word little-endian: the same magic appeared as `53 45 32 52` at
+file offset 802 (cart address 0x100002 maps to saveram offset 802).
+Confirmed by reading both images after the measured best legs, and by
+patching the magic to the old `ESRG`: `45 53 52 47` in the card and
+`53 45 47 52` in saveram. Both entries rejected it and started from the
+five defaults. Lesson: when proving a cart's backup-RAM/card state from
+MAME, patch the card file as bytes but the MVS saveram as byte-swapped
+words.
+
+## A sprite's SCB1 row is two words; reading +2 reads the next row (2026-10-30, B6)
+
+The entry ring's first commit wrote the correct tile (the C ROM base + 18)
+into slot 320 but the probe read the attribute as 0. Cause: a Neo Geo
+sprite's SCB1 control block has **two words per row** — the tile number at
+`ADDR_SCB1 + slot*64 + 0` (a full 16-bit tile index, which is why the ring's
+46610 base fits) and the attribute word (palette in bits 8..11, plus the
+flip/shrink bits) at `+1`. Reading `+2` is the *next row's* tile, not the
+attribute. FIXMAP is different: each fix cell is one word with the palette
+in the high nibble. Confirmed by fixing the read to `+1` and by the ring
+word count (37 glyph slots × 5 words + pointer). Lesson: sprite SCB1 is
+`tile` then `attr` per row; only the fix layer packs palette and tile into
+one word.
+
+## VRAM auto-increment does not wrap SCB4 back to SCB2 (2026-10-30, B6)
+
+The ring's first commit set `VRAMMOD=0x200` and `VRAMADDR=ADDR_SCB2+320`
+once, then wrote 3 words per slot for all 38 slots. The result was garbage
+SCB2/3/4 words after slot 0: the auto-increment walked from SCB2 slot 320
+to SCB3 slot 320 to SCB4 slot 320, then continued into the SCB1/other
+region instead of wrapping back to SCB2 slot 321. The fix is the same
+pattern radar_gfx.c uses: set `VRAMMOD=0x200` and `VRAMADDR=ADDR_SCB2+slot`
+**inside the slot loop**, then write that slot's three words. Confirmed by
+the entry leg's 3496 ring-slot words matching build/ring_map.h. Lesson:
+when writing a slot's SCB2/SCB3/SCB4 triple, reset the address per slot;
+the modulo only wraps within the 0x200 window, not between the three
+arrays.
+
+## A 68k enum is 4 bytes; a probe must read `flow` as u32 (2026-10-30, B6)
+
+The entry probe read the `flow` state with `sp:read_u8(flow_addr)` and
+always saw 0 while the cart was in FLOW_ENTRY (hud_framecnt had frozen at
+GAME OVER + 118, so it had entered). `nm` shows `flow` as a 4-byte object:
+the enum's value 3 is stored big-endian as `00 00 00 03`, so the byte at
+the symbol's address is 0. Reading `sp:read_u32(flow_addr)` fixed the
+leg's transition detection. Lesson: read 68k enums/ints at their declared
+width (u32 unless the source says u8/u16); the host's `sizeof(enum)` is
+not the m68k ABI's 1 byte.
+
+## A 68k local array indexed in an unrolled loop lost a store (2026-10-30, V1)
+
+`show_smoke` staged each plume column's SCB2/SCB3/SCB4 in two local stack
+arrays (`s2[12]`, `s3[12]`, `s4[12]`) inside a `for (c = 0; c < SMOKE_COLS;
+c++)` loop. The compiler unrolled the two iterations; the probe then read
+the first column's SCB3 as 0 while the second column's was right (and the
+entry leg's `SM` words showed the same shape on every plume pair). The
+placement memo and the tile words were correct, so the staged SCB3 was
+being lost. Moving the three staging arrays to file scope (`smoke_s2`,
+`smoke_s3`, `smoke_s4`) made every column's SCB3 land. Lesson: on this
+68k GCC, prefer file-scope arrays for a staging table that a small fixed
+loop indexes; a stack array in an unrolled loop can drop one iteration's
+store.
+
+## An entry snapshot's pixels are one staged frame behind the entry state (2026-10-30, K2)
+
+The entry probe reads `entry_state` and the ring/flyer VRAM words at the
+same tick, and takes one snapshot at entry frame 6. The words are staged by
+the previous frame's body and committed in this frame's vblank, so the
+ring-slot check compares `entry_state` at frame N-1. The snapshot follows
+the same lag: comparing the mid-flight flyer against the snapshot's own E
+record (fly_t 4) gave 121 of 152 pixels wrong; against the previous frame's
+E record (fly_t 3, so `fly_scb2[2]`) gave 0 of 152. The ruin pixel check
+had already matched at the snapshot's own angle, so only the flyer's
+per-frame motion exposed the lag. Lesson: when checking a snapshot against
+a staged sprite group, use the previous frame's state, exactly as the
+VRAM-word checks do.
+
+## A hot fix-span writer must stay inlined to keep the demo's frame time (2026-10-31, G1)
+
+Moving `title_fix_span`'s inlined loop out of `flow.c` into an external
+`fix_span` in `fix.c` added 10 scanlines to the demo cycle's worst frame:
+`boot-test demo` went from the baseline's 237-line work span to 247
+(limit 240) at demo frame 2066. The table/init move did not matter; an
+external call per dirty row did. Keeping the one writer as a `static
+inline` in `fix.h` with the pair table and `fix_thick_init` still in
+`fix.c` restored 237. The GAME OVER drawing helper also had to sit after
+`hud_demo_stage`/`hud_demo_commit` in `hud.c`, or its added code shifted the
+demo's hot functions and the span grew again. Lesson: on this 68k build, a
+per-row fix writer that was inlined must stay inline (header or same TU);
+moving it to another translation unit costs enough to fail the demo's
+240-line framemark check even though the cart is functionally identical.
+
+## `TITLE_ROW_NONE` must take the ASCII path in the thick span writer (2026-10-31, G1)
+
+Page 1's row 21/22 restore sets `title_dirty_base` to `TITLE_ROW_NONE`
+(0xffff), the same path the old `title_fix_span` sent through its
+`else` (base + character) branch; the probe maps the resulting control byte
+to a space. A new thick/ASCII test of `base != 0` sent 0xffff through the
+thick branch instead, and `boot-test demo` read `'+++++++++++++++'` on
+page 1's row 21 (the wrapped thick tile decoded as '+'). The fix is to test
+the two thick bases (`base == TITLE2_ROW_BASE || base == TITLE2_CAP_BASE`),
+not "nonzero". Lesson: `TITLE_ROW_NONE` is a sentinel for "blank the row",
+not a thick base; every span writer must keep it on the ASCII-space path.

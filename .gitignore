@@ -13,3 +13,6 @@ __pycache__/
 *~
 .DS_Store
 /.tasks/
+
+# play saves (scripts/mame.sh: the AES memory card, the MVS nvram)
+/saves/

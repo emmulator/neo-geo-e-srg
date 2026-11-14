@@ -74,21 +74,36 @@ static void test_place_formula(void)
 static void test_slot_layout(void)
 {
     /* the overlays own BROKEN_SLOT_BASE..(BROKEN_SLOT_AFTER-1); the dome is
-     * right before them and the ship starts at BROKEN_SLOT_AFTER, so
-     * nothing overlaps and a broken tile can never draw over the dome (it
-     * sits above it) nor under the ship, front missiles or explosions
-     * (they have higher slots). The one slot map is src/slots.h (M5 Task
-     * 1) — every range follows the one before it, and the counts equal the
-     * art they describe. */
+     * right before them and the front prop pool starts at BROKEN_SLOT_AFTER
+     * (dome-scenery Task 15: the near tree draws over the dome and its
+     * overlays and under the ship), then the ship, so nothing overlaps and
+     * a broken tile can never draw over the dome (it sits above it) nor
+     * under the ship, the console (dome-scenery Task 7: right after the
+     * ship, under the front missiles), the front missiles or explosions
+     * (they have higher slots). The one slot map is src/slots.h (M5 Task 1)
+     * — every range follows the one before it, and the counts equal the art
+     * they describe. */
     check(BROKEN_SLOT_BASE == DOME_SPRITE + DOME_COUNT, "slot base", 0, 0);
-    check(DOME_SPRITE == STAR_SPRITE + NSTARS + MIS_BEHIND_COUNT,
-          "dome after stars and behind missiles", 0, 0);
+    check(DOME_SPRITE == SMOKE_BACK_SPRITE + SMOKE_BACK_COUNT,
+          "dome after the back smoke", 0, 0);
+    check(SMOKE_BACK_SPRITE == MIS_BEHIND_SPRITE + MIS_BEHIND_COUNT,
+          "back smoke after the behind missiles", 0, 0);
     check(DOME_SPRITE + DOME_COLS <= BROKEN_SLOT_BASE, "after dome", 0, 0);
     check(BROKEN_SLOT_AFTER > BROKEN_SLOT_BASE, "slots exist", 0, 0);
     check(SHIP_SPRITE == BROKEN_SLOT_AFTER, "ship after overlays", 0, 0);
     check(SHIP_SPRITE == BROKEN_SLOT_BASE + BROKEN_SLOT_COUNT,
           "ship after the overlay count", 0, 0);
-    check(MIS_FRONT_SPRITE == SHIP_SPRITE + SHIP_COUNT, "front missiles", 0, 0);
+    /* 10-26: the front props draw over the ship (a front prop that overlaps
+     * the ship on screen is always nearer the camera) */
+    check(PROP_FRONT_SPRITE == SHIP_SPRITE + SHIP_COUNT,
+          "front props after the ship", 0, 0);
+    /* dome-scenery Task 7: the console sits between the ship (since 10-26
+     * the front props) and the front missiles (it draws over both and under
+     * the missiles) */
+    check(CON_SPRITE == PROP_FRONT_SPRITE + PROP_FRONT_COUNT,
+          "console after the front props", 0, 0);
+    check(CON_COUNT == 20, "console count (CON_COLS)", 0, 0);
+    check(MIS_FRONT_SPRITE == CON_SPRITE + CON_COUNT, "front missiles", 0, 0);
     check(EXPL_SPRITE == MIS_FRONT_SPRITE + MIS_FRONT_COUNT, "explosions", 0, 0);
     check(RADAR_SPRITE == EXPL_SPRITE + EXPL_COUNT, "radar reserved", 0, 0);
     check(EXPL_SPRITE + EXPL_COUNT + RADAR_COUNT <= 381, "last slot <= 380", 0, 0);

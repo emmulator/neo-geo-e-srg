@@ -206,7 +206,8 @@ def test_heavy_fire_matches():
     # v1.1.0 rules (the 6-hit ring rule changed every game) and the HUD-layout
     # dome lift (2026-10-18: DOME_Y 88 -> 72 shortens the bullets' on-screen
     # lives, and that table's RNG draws shift every seeded game): 1019 locks
-    # 75, 1023 locks 57.
+    # 75 at today's dome (68 at the knob's 0.9/10-column proof), 1023 locks
+    # 56 (67 there).
     locks = 0
     for seed in (1019, 1023):
         c, m, (_, _, rules, radar) = run_both(seed, 30000, 0.6)
@@ -323,11 +324,12 @@ def test_fresh_breaks_only_count_as_dome_hits():
 def test_rings_open_at_six_hits_before_six_kills():
     """The first launch into a ring-5+ cell must come after dome_hits
     reaches 6 with kills below 6 — the model's own frame."""
-    # (seed 34: after the HUD-layout dome lift (2026-10-18) its first
-    # ring-5+ launch comes with 2 kills and 7 hits; seed 2's game no longer
-    # reaches GAME OVER inside the window because the bullets' on-screen
-    # lives changed with the dome's Y)
-    _, m, (_, mis, rules, _) = run_both(34, 20000, 0.05)
+    # (seed 40: its first ring-5+ launch comes with 1 kill and 6 hits; it
+    # still reaches GAME OVER inside the window. Dome-scenery Task 2: the
+    # bullets now live to the farther off-screen edge of the smaller dome,
+    # so the same seed's game runs longer and GAME OVER moves past 20000
+    # frames — the window below is the seed's own, not a weakening)
+    _, m, (_, mis, rules, _) = run_both(40, 30000, 0.05)
     assert rules.saw_game_over, "the seeded game must reach GAME OVER"
     for i, line in enumerate(mis_line(m)):
         head = line.split("|")[1].split()
@@ -365,7 +367,11 @@ def test_easy_game_matches_the_model_framebyframe():
     EASY's missiles fly at 0.75x). It must reach score 1000 so that at
     least two speed steps are used; assert the score and that a missile
     actually flew with the EASY table."""
-    c, m, (_, mis, rules, _) = run_both_easy(5, 30000, 0.3)
+    # Dome-scenery Task 2: the bullets live to the farther off-screen edge
+    # of the smaller dome, so the same seeded game runs longer; 40000
+    # frames is that game's own new window (it passes the 1000-score step
+    # and still uses two speed steps — the check is not weakened)
+    c, m, (_, mis, rules, _) = run_both_easy(5, 40000, 0.3)
     assert_same(c, m)
     assert mis.score >= 1000, f"EASY game must pass the 1000-score step, got {mis.score}"
     assert any(o.dr == mm.DR_EASY[k] for o in mis.obj for k in range(mm.MIS_SPEEDS)), \

@@ -8,7 +8,9 @@
 /* the Vectrex's 16 and 24 frames at 50 Hz, x1.18 for the Neo Geo's 59.2 Hz */
 #define SHIP_MOVE_FRAMES 19
 #define SHIP_JUMP_FRAMES 28
-#define SHIP_LIFT_PX     18     /* top of the jump arc (the Vectrex's 24 DAC units) */
+#define SHIP_LIFT_PX     12     /* top of the jump arc: 18 x 2/3 (Dome-scenery
+                                 * Task 2; the full dome's 18 was the Vectrex's
+                                 * 24 DAC units) */
 #define SHIP_TURN        240    /* dome rotation steps per turn */
 /* spinning at the peak: the Vectrex's one step per 50 Hz frame, so 50 steps
  * every 59 frames here (the first frame of a spin steps at once) */
@@ -30,6 +32,7 @@ typedef struct {
     s32 acc_s, acc_l;  /* rotation and latitude while moving, 16.16 */
     s32 inc_s, inc_l;  /* per frame */
     u8 broken[10];     /* broken cells, a bit each (cracks arrive in M4) */
+    u8 heading;        /* 0..7: the drawing heading, h = ship_dir / 4 (H4) */
 } ship_t;
 
 void ship_reset(ship_t *s);                        /* at rest on CELL_START */
@@ -37,6 +40,7 @@ void ship_place(ship_t *s, u8 cell);               /* at rest on any cell, clear
 void ship_locate(ship_t *s, u8 cell);              /* at rest on any cell, keeps broken */
 void ship_set_broken(ship_t *s, u8 cell);
 u8 ship_dir(u8 input);         /* bios_p1current -> 0..31 (0 right, 8 up, 16 left, 24 down); 255 = centred */
+u8 ship_heading(u8 d);         /* d / 4: the drawing heading for a stick direction */
 u8 cell_toward(u8 c, u8 d);    /* c's neighbour nearest direction d (< 45 deg off); 255 = none */
 /* once per frame: input = bios_p1current, pressed = bios_p1change (B = jump) */
 void ship_frame(ship_t *s, u8 input, u8 pressed);

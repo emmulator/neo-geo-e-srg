@@ -63,7 +63,8 @@ import geometry as g  # noqa: E402
 import gen_missiles as gm  # noqa: E402
 import render_dome as rd  # noqa: E402
 import render_missiles as rm  # noqa: E402
-import render_ship as rs  # noqa: E402
+import render_rockets as rr  # noqa: E402  (MIS_FRAMES: the rocket's tile stride)
+import render_hovercraft as rs  # noqa: E402
 
 TILE = 16                       # stone size, px
 
@@ -90,14 +91,7 @@ for v in range(g.VIEWS):
     a = 2 * math.pi * v / g.STEPS
     _ROT.append(np.array([[math.cos(a), 0, math.sin(a)], [0, 1, 0],
                           [-math.sin(a), 0, math.cos(a)]]))
-_CF = []                        # (face, centre) sorted by -y: index == cell number
-for k, f in enumerate(_FACES):
-    P = _PTS[list(f)]
-    c = P.mean(axis=0)
-    c /= np.linalg.norm(c)
-    m = np.mean(P, axis=0)
-    if math.degrees(math.acos(min(1.0, m[1] / np.linalg.norm(m)))) <= g.RIM_DEG + 0.01:
-        _CF.append((f, c))
+_CF = g.whole_cells(_PTS, _FACES)    # (face, centre) sorted by -y: index == cell number
 _CF.sort(key=lambda fc: -fc[1][1])
 assert len(_CF) == 76, "cells changed: the tables below are sized for 76"
 
@@ -228,18 +222,22 @@ for c in range(76):
             _HSUM[c] += o[1]
 
 # ---- C ROM layout ----
-_MIS_BASE = rs.TILE_BASE + g.SHIP_STEPS * rs.COLS * rs.ROWS
+_MIS_BASE = rs.TILE_BASE + rs.TILES
 _MIS_N = len(gm.tables()["th"]) * rm.VIEWS
-# the C ROM's tile numbering: dome (256), ship, missiles (l 16 rings-views
-# rows, m 4, s 1, per view), explosions, then the broken tiles. The old
-# +32 was a stale tolerance for a never-used gap between the previous sheets
-# and the broken sheet: the parts are concatenated back to back (the Makefile
-# writes them with no pad), so the first broken tile number is exactly the
-# sum of the preceding parts' tiles (718592 bytes = 11228 tiles, matching
-# the file offsets the Makefile assembles). The host tests decode the built
-# ROM at these numbers, so the value must equal the file layout: 11228.
-TILE_BASE = _MIS_BASE + _MIS_N * (16 + 4 + 1) + rm.EXPL_FRAMES * 16
-assert TILE_BASE == 11228, TILE_BASE
+# the C ROM's tile numbering: dome (256, its size from geometry.py's knob),
+# ship, missiles (l 16 rings-views rows, m 4, s 1, per view), explosions,
+# then the broken tiles. The parts are concatenated back to back (the
+# Makefile writes them with no pad), so the first broken tile number is
+# exactly the sum of the preceding parts' tiles; at the 11x8 box that is
+# 718592 bytes = 11228 tiles, matching the file offsets the Makefile
+# assembles. The host tests decode the built ROM at these numbers, so the
+# value must stay equal to the file layout.
+# the missile sheets' tiles per view: mis_l 3x3 = 9, mis_m 2x2 = 4, mis_s
+# 1x1 = 1 (the levels' boxes are 2/3 since Dome-scenery Task 2), each cell
+# holding MIS_FRAMES (4) flame frames since the rockets task; the explosion
+# is rm.EXPL_BOX^2 / 16^2 tiles per frame
+TILE_BASE = _MIS_BASE + _MIS_N * (9 + 4 + 1) * rr.FRAMES \
+    + rm.EXPL_FRAMES * (rm.EXPL_BOX // 16) ** 2
 
 # ---- the art ----
 
@@ -530,7 +528,7 @@ def main():
           "   q*48 + r is broken_perm^q(cell) at view r (the art stores the\n"
           "   48 views; the runtime maps (cell, dome_angle) through this). */\n")
         w("static const u8 broken_perm[76] = {" + ", ".join(map(str, _PERM)) + "};\n")
-        w("static const u8 broken_slot0[76] = {" + ", ".join(map(str, _SLOT0)) + "};\n")
+        w("static const u16 broken_slot0[76] = {" + ", ".join(map(str, _SLOT0)) + "};\n")
         w("static const u8 broken_max_w[76] = {" + ", ".join(map(str, _MSW)) + "};\n")
         w("static const u16 broken_tile0[76] = {\n  ")
         for cell in range(76):
@@ -551,7 +549,7 @@ def main():
         w("};\n")
         w("/* broken_cell[cell][view]: {w, h, canvas x, canvas y} in stones\n"
           "   and dome-box px; {0,0,0,0} = the cell faces away. The canvas\n"
-          "   x/y are signed (the dome box is 176 px wide, its y origin is\n"
+          "   x/y are signed (the dome box is DOME_W px wide, its y origin is\n"
           "   above the top row), so the array is s16. */\n")
         w("static const s16 broken_cell[76][%d][4] = {\n" % g.VIEWS)
         for cell in range(76):

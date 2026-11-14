@@ -13,31 +13,32 @@
  * Constraint record (the plan's style):
  *
  *   Sprite slots: THE map lives in src/slots.h (M5 Task 1); the overlays
- *   own BROKEN_SLOT_BASE .. BROKEN_SLOT_AFTER-1 (44..188: 145 columns for
+ *   own BROKEN_SLOT_BASE .. BROKEN_SLOT_AFTER-1 (36..145: 110 columns for
  *   the 76 cells' widest pictures; the draw packs the facing cells
  *   contiguously from BROKEN_SLOT_BASE). A HIGHER slot draws on top
  *   (neo-geo-dev, "Sprite drawn behind something it should cover"), so the
  *   slot constants all move with slots.h:
  *     Stars:       1..12 (behind everything, Task 2)
- *     Missiles:    13..32 (behind the dome)
- *     Dome:        33..43 (11 columns, a sticky chain, never shrunk)
- *     Broken:      44..188 (packed, one stone column per 16 px of cell)
- *     Ship:        189..190 (2 columns)
- *     Front darts: 191..210 (NOBJ x MIS_COLS_MAX)
- *     Explosions:  211..218 (NEXPL x EXPL_COLS)
- *     Radar:       219..237 (reserved, Task 4)
+ *     Missiles:    13..27 (behind the dome)
+ *     Dome:        28..35 (8 columns, a sticky chain, never shrunk)
+ *     Broken:      36..145 (packed, one stone column per 16 px of cell)
+ *     Ship:        146..147 (2 columns)
+ *     Front darts: 148..162 (NOBJ x MIS_COLS_MAX)
+ *     Explosions:  163..168 (NEXPL x EXPL_COLS)
+ *     Radar:       169..187 (reserved, Task 4)
  *   A broken overlay draws over the dome and under the ship, the front
  *   missiles and the explosions; a missile behind the dome stays hidden by
  *   it.
  *
- *   C ROM range: BROKEN_TILE_BASE = 11228, right after the old crack
- *   pictures' space (11228 = the byte count of the sheets before the
- *   broken tiles — the Makefile concatenates the parts back to back).
- *   The art is 7,909 tiles, PACKED in the runtime's fetch order: per
- *   (cell, view) picture, its w x h stones are consecutive tiles,
+ *   C ROM range: BROKEN_TILE_BASE comes from build/broken_map.h (7096:
+ *   right after the 2/3 missile and explosion sheets; the Makefile
+ *   concatenates the parts back to back, so the number follows the art).
+ *   The art is 4,693 tiles (7,909 stones packed), PACKED in the runtime's
+ *   fetch order: per (cell, view) picture, its w x h stones are
+ *   consecutive tiles,
  *   picture = BROKEN_TILE_BASE + broken_tile0[cell] +
  *   broken_view_t0[cell][view], stone (r, c) = picture + r * w + c.
- *   render_broken.py emits broken.c1/c2 in exactly this order (~0.51 MB),
+ *   render_broken.py emits broken.c1/c2 in exactly this order (~0.30 MB),
  *   so CROMSIZE comes back down to 1 MB per chip (the plan: "put CROMSIZE
  *   back as low as the data allows"). Only the 48 views are stored: the
  *   dome's 5-fold symmetry maps (cell, dome_angle = q*48 + r) to

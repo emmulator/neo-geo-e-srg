@@ -17,9 +17,9 @@
 #include "rules.h"
 #include "cracks.h"
 #include "hud.h"
-#include "stars.h"
 #include "radar.h"
 #include "radar_gfx.h"
+#include "collapse.h"
 
 #define PAL_TEXT 0   /* reserved (hud.c uses PAL_HUD = 7 for the HUD text) */
 
@@ -27,7 +27,10 @@ static void palettes_init(void)
 {
     MMAP_PALBANK1[0] = 0x8000;                    /* reference colour: black */
     MMAP_PALBANK1[PAL_TEXT * 16 + 1] = 0x0fff;    /* text: white */
-    *((volatile u16 *)0x401ffe) = 0x0000;         /* backdrop: black */
+    *((volatile u16 *)0x401ffe) = 0x0000;         /* backdrop: black
+                                                   * (the title; src/flow.c
+                                                   * sets the sky at a game
+                                                   * start) */
 }
 
 /* the one-time init, shared by every BIOS entry: the palettes, a blank fix
@@ -39,13 +42,13 @@ static void init_all(void)
     palettes_init();
     fix_clear();
     dome_init();
+    collapse_init();              /* the collapse redo's Task C2: PAL_FIRE */
     ship_gfx_init();
     mis_gfx_init();
     cracks_init();
     hud_palette_init();            /* the PAL_HUD text palette only: the title
                                     * draws its own rows and the HUD's constant
                                     * rows are not drawn until a Start */
-    stars_init();
     radar_gfx_init();
 }
 

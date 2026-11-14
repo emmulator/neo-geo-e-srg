@@ -11,8 +11,10 @@ ship slots (SCB2/3/4, SCB1 attribute row, and the 4 SCB1 tile rows of the
 2x2 picture):
 
   C  start of game: cart frame 45
-  X  the respawn: the frame the alive flag re-rises to 1 after the death
-     (the model's death + DEAD_FRAMES_NEO = 604)
+  X  the first frame after the respawn whose ship slots show the respawned
+     ship (Task S2's vblank commit is one frame behind the state: the alive
+     flag re-rises at the model's death + DEAD_FRAMES_NEO = 604, and the
+     slots show the respawned ship one frame later)
 
 and a snapshot at each. This checker:
 
@@ -59,6 +61,7 @@ import mis_model as mm  # noqa: E402
 import mis_seed  # noqa: E402  (Task 1: the cart's seed)
 import rules_model as rm  # noqa: E402
 import ship_model as sm  # noqa: E402
+import neo_palette as npal  # noqa: E402
 import layout as lay  # noqa: E402
 from PIL import Image  # noqa: E402
 
@@ -169,21 +172,22 @@ def frame_model(state, inp, pressed):
     return died
 
 
-def ship_amber_pts(im, centre):
-    """the ship's amber pixels near `centre` (the cell's projected centre on
-    the 320x224 screen). Missiles are red, bullets green, the dome's glows
-    keep r >= 90 (never amber), so amber is the ship's hull+glow."""
+def ship_pts(im, centre):
+    """the ship's own-palette pixels near `centre` (the cell's projected
+    centre on the 320x224 screen). The hovercraft's palette (cherry paint,
+    chrome, cream and glass) is read from ship.pal; the console shares one
+    dark colour, so its static pixels are left out."""
     w, h = im.size
     sx, sy = w / 320.0, h / 224.0
     cx, cy = centre
+    ship_rgb = set(npal.ship_palette_rgb()[1:]) - npal.console_only_rgb_set()
     pts = []
     for py in range(h):
         for px in range(w):
             xx, yy = px / sx, py / sy
             if abs(xx - cx) > 30 or abs(yy - cy) > 20:
                 continue
-            r, g, b = im.getpixel((px, py))[:3]
-            if r > 150 and g > b + 50:
+            if tuple(im.getpixel((px, py))[:3]) in ship_rgb:
                 pts.append((xx, yy))
     return pts
 
@@ -250,24 +254,30 @@ def main():
     print(f"model: first death at cart frame {first_death}, respawn at "
           f"{first_death + DEAD_FRAMES_NEO}")
 
-    # ---- the probe's dump X is the respawn frame, at the ship's rest state
-    # The probe's death is the 1->0 edge of the alive flag: rules_begin
-    # latches the flag while the death lands in rules_end, so the recorded
-    # death frame is the model's death frame + 1; the dump X is the frame
-    # the flag re-rises to 1 (the respawn frame itself, death + 118).
+    # ---- the probe's dump X is the first frame whose slots show the
+    # respawned ship. The probe's death is the 1->0 edge of the alive flag:
+    # rules_begin latches the flag while the death lands in rules_end, so the
+    # recorded death frame is the model's death frame + 1; the flag re-rises
+    # at the respawn frame (death + 118), and Task S2's vblank commit means
+    # the slots show that state one frame later.
     x = dumps["X"]
-    model_respawn = first_death + DEAD_FRAMES_NEO
+    # Task S2: ship_gfx_prepare's SCB1/SCB3 commit is one vblank behind the
+    # state, so the first frame whose slots show the respawned ship is the
+    # respawn frame + 1.
+    model_respawn = first_death + DEAD_FRAMES_NEO + 1
     if x["fc"] != model_respawn:
-        failures.append(f"dump X at cart frame {x['fc']}, want the model's "
-                        f"respawn frame {model_respawn} (death {first_death} "
+        failures.append(f"dump X at cart frame {x['fc']}, want the first "
+                        f"shown respawn frame {model_respawn} (respawn at "
+                        f"{first_death + DEAD_FRAMES_NEO}, death {first_death} "
                         f"+ {DEAD_FRAMES_NEO})")
-    st = state_by_fc.get(x["fc"])
+    # the displayed slots are the state prepared at the previous frame
+    st = state_by_fc.get(x["fc"] - 1)
     if st is None:
         failures.append(f"the model never reached cart frame {x['fc']}")
     else:
         cell, left, lift = st
         if cell != sm.Ship().cell or left != 0 or lift != 0:
-            failures.append(f"model ship at {x['fc']}: cell {cell} left {left} "
+            failures.append(f"model ship at {x['fc'] - 1}: cell {cell} left {left} "
                             f"lift {lift}, want at rest on the start cell "
                             f"({sm.Ship().cell}, 0, 0)")
         if x["rc"] != 1:
@@ -315,8 +325,8 @@ def main():
     im1 = Image.open(snaps_snap(snap_png, probe, 1)).convert("RGB")
     im2 = Image.open(snaps_snap(snap_png, probe, 2)).convert("RGB")
     centre = CELL27_CENTRE           # cell 27.s projected centre (224-line screen)
-    p1 = ship_amber_pts(im1, centre)
-    p2 = ship_amber_pts(im2, centre)
+    p1 = ship_pts(im1, centre)
+    p2 = ship_pts(im2, centre)
     if not p1:
         failures.append(f"no ship pixels found at the start (snapshot {snaps['S1']})")
     if not p2:
@@ -383,8 +393,8 @@ def _nodeath(records, dumps, probe_death, snaps, failures, snap_png, probe):
     im1 = Image.open(snaps_snap(snap_png, probe, 1)).convert("RGB")
     im2 = Image.open(snaps_snap(snap_png, probe, 2)).convert("RGB")
     centre = CELL27_CENTRE
-    p1 = ship_amber_pts(im1, centre)
-    p2 = ship_amber_pts(im2, centre)
+    p1 = ship_pts(im1, centre)
+    p2 = ship_pts(im2, centre)
     if not p1 or not p2:
         failures.append(f"ship pixels missing: start {len(p1)} after {len(p2)}")
     elif abs(len(p1) - len(p2)) > max(4, len(p1) // 4):
@@ -407,7 +417,11 @@ def snaps_snap(snap_png, probe, idx):
     them into (the `snap` directory next to the probe output)."""
     # the probe's dir: $OUT/snap (boot_test) — the snapshots live in its
     # MAME-managed subdirectory (aes/), or directly in it
-    base = os.path.dirname(os.path.dirname(os.path.abspath(snap_png)))
+    # the leg's own output directory ($OUT: snap.png's directory). Its
+    # snap/ holds this run's PNGs only; two levels up was the whole
+    # build/ (it worked while every leg shared build/boot, and walked
+    # other legs' snapshots once each leg got its own directory).
+    base = os.path.dirname(os.path.abspath(snap_png))
     for root in (os.path.join(base, "snap"), base):
         if not os.path.isdir(root):
             continue

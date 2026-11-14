@@ -38,7 +38,8 @@ What carries over almost unchanged:
 - the sound designs (the YM2610's SSG is register-compatible with the AY).
 
 What has to be rebuilt: every piece of drawing code (`dome_draw.s`,
-`missile_draw.s`, `radar.s`, `cracks.s`, `hud.s`, `stars.s`), the
+`missile_draw.s`, `radar.s`, `cracks.s`, `hud.s`, `stars.s` — the stars
+are retired on the Neo Geo, see 2.4), the
 calibration machinery (meaningless on a raster screen — dropped), input
 (analog → digital), the screen layout (portrait → landscape) and the
 sound driver.
@@ -115,17 +116,22 @@ can't be baked into the 48 views.
 - **Explosions:** the Vectrex's 2D fragment animation rendered to a short
   sprite animation (could use LSPC auto-animation, tiles 4/8-aligned).
 
-### 2.4 Radar, HUD, stars, title screens
+### 2.4 Radar, HUD, sky and title screens
 
 - **Radar:** ellipse and roof as one static sprite picture. Each missile's
   stick is a 1-tile-wide sprite whose **vertical shrink sets its height**;
   the blip/heading line a small sprite picked from ~16 pre-rendered angles.
   Lock-on blink = a palette change (free).
 - **HUD:** integrity, lives, score on the fix layer (free text).
-- **Stars:** a full-width background — either a scrolling sprite plane (21
-  columns, scroll by moving the driver sprite; parallax layers possible)
-  or the fix layer. Recommended: sprite plane, so stars sit behind the
-  dome and can be richer (colours, twinkle via palette cycling).
+- **Stars:** **retired** (dome-scenery Task 4). The Vectrex's dim stars
+  were an M5 feature; the first enhancement after 1.0.0 replaces them with
+  a blue sky (RGB (120, 176, 228), packed to the Neo Geo's 15-bit format as
+  `generate_srom.py`'s `neo_colour` does — word 0x47be, shown by MAME's DAC
+  as (117, 182, 233)) drawn as the backdrop in play. The module
+  (`src/stars.c/.h`), its generator (`tools/render_stars.py`), the C ROM
+  tile, the 1..12 sprite slots and their tests/probe/checker/boot leg are
+  removed; the title keeps its black backdrop, set on every title entry and
+  every game start.
 - **Title pages, levels, high scores:** fix-layer text (no speed limits
   any more — the Vectrex's 6-line rule goes away). The dome turning behind
   the title is free.
@@ -215,7 +221,7 @@ space, a snapshot shows what it should) and a look in the emulator.
 | M2 | Ship + moves + jumps on the dome (port of `cell_adj`/`cell_toward`, 8-way input) | same cell paths as the Vectrex for the same inputs |
 | M3 | Missiles, bullets, explosions, occlusion by sprite priority | hits and misses match the Vectrex rules; no missile shows through the dome |
 | M4 | Cracks, spreading, integrity, collapse effect, lives, score, levels (fix-layer HUD) | a full game can be played to GAME OVER |
-| M5 | Radar and star field | radar matches the Vectrex's information; budget measured |
+| M5 | Radar (the star field was built, then retired in the dome-scenery plan) | radar matches the Vectrex's information; budget measured |
 | M6 | Title pages, level select, persistent high scores (backup RAM / memory card), attract mode | MVS and AES both boot to title and keep scores |
 | M7 | Sound effects (ADPCM from the Vectrex captures) | every effect plays at the right moment |
 | M8 | Polish: art pass, tuning for 60 Hz feel, real-hardware test if available | release 1.0.0 |

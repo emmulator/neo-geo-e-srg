@@ -12,25 +12,30 @@ BUILDDIR = build
 ROMDIR   = $(BUILDDIR)/rom
 GAMEROM  = esrg
 GAMETITLE= E-SRG
+# the cart's NGH number (BCD), the header's rom_NGH_ID: the BIOS keys the MVS
+# backup RAM and the AES memory card's save by it. 7278 was drawn at random
+# (10-30) to leave ngdevkit's default 1337 (0x0539), which every ngdevkit
+# homebrew that keeps it shares, and the low range SNK's own carts use.
+NGH_ID   = 0x7278
 
 override CFLAGS += -I$(NGDEVKIT_PREFIX)/m68k-neogeo-elf/include -Isrc -I$(BUILDDIR) \
-	-std=c99 -fomit-frame-pointer -O2 -g -Wall -Wextra \
-	$(if $(NSTARS),-DNSTARS=$(NSTARS),)
+	-std=c99 -fomit-frame-pointer -O2 -g -Wall -Wextra -DNGH_ID=$(NGH_ID)
 # rom_eye_catcher_mode=2: no BIOS boot logo. The BIOS draws its "MAX 330 MEGA"
 # animation from the cart's own S/C ROM tiles (SNK's art in commercial carts);
 # ours hold the font there, so mode 0 showed stray letters.
 LDFLAGS = -specs ngdevkit -L$(NGDEVKIT_PREFIX)/m68k-neogeo-elf/lib -lngdevkit \
-	-Wl,--defsym,rom_eye_catcher_mode=2
+	-Wl,--defsym,rom_eye_catcher_mode=2 -Wl,--defsym,rom_NGH_ID=$(NGH_ID)
 
 PROMSIZE = 1048576
 # CROMSIZE: power of two >= the back-to-back content, 16 KiB BIOS zeros +
 # dome + ship + missile + explosion sheets + the broken tiles. The broken
 # tiles are now PACKED (render_broken.py emits them directly in the runtime's
 # fetch order: 7,909 tiles instead of the old sheet's 20,735 places, so the
-# "mostly empty" padding is gone), but the whole C ROM is still 1,224,768
-# bytes (718,592 pre-broken + 506,176 broken), so the smallest power of two
-# that fits is 2 MB per chip (the task: "as low as the data allows").
-CROMSIZE = 2097152
+# "mostly empty" padding is gone); the 8-heading hovercraft (H4) makes the
+# whole C ROM content 46,354 tiles = 2,966,656 bytes + the 16 KiB BIOS zeros,
+# 2,983,040 bytes (2.84 MB), so 4 MB per chip is the smallest power of two
+# that fits.
+CROMSIZE = 4194304
 MROMSIZE = 131072
 
 PROM1 = $(ROMDIR)/$(GAMEROM)-p1.p1
@@ -42,7 +47,10 @@ VROM1 = $(ROMDIR)/$(GAMEROM)-v1.v1
 CART  = $(ROMDIR)/$(GAMEROM).zip
 
 SRCS = $(wildcard src/*.c)
-OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(SRCS))
+# Task P2: src/props_layout.c is the host-side definition of the props'
+# layout (build/props_sim and the table generator link it); the cart reads
+# build/props_table.h instead, so its object is not in the cartridge.
+OBJS = $(filter-out $(BUILDDIR)/props_layout.o,$(patsubst src/%.c,$(BUILDDIR)/%.o,$(SRCS)))
 ELF  = $(BUILDDIR)/rom.elf
 
 ASSETS = $(BUILDDIR)/assets
@@ -53,13 +61,27 @@ DOME_PAL = $(ASSETS)/dome.pal
 DOME_MAP = $(BUILDDIR)/dome_map.h
 CELLS_H  = $(BUILDDIR)/cells.h
 FIX_PAL  = $(BUILDDIR)/fix_pal.h
+# high-score boards Task B4: the thick-outline title font's tile numbers
+# (tools/generate_srom.py --title2-header; src/flow.c includes it).
+TITLE_FONT_H = $(BUILDDIR)/title_font.h
+# Attract Task A3: the demo script — the recorded input runs (src/demo.c
+# includes the header) and the JSON events the demo boot-test states.
+DEMO_MAP = $(BUILDDIR)/demo_map.h
+DEMO_JSON = $(BUILDDIR)/demo.json
+# high-score boards Task B5: the initials ring's generated header and sheet
+# (tools/render_ring.py is the orchestrator's). src/entry.c includes
+# ring_map.h for ring_code and the phase constants; the sheet joins the C
+# ROM in Task B6.
+RING_GIF = $(ASSETS)/ring.gif
+RING_MAP = $(BUILDDIR)/ring_map.h
+# high-score boards Task B6: the ring's 38 16x16 tiles, LAST in the C ROM
+# (after the collapse; src/ring_gfx.c's RING_TILE_BASE is
+# COLLAPSE_TILE_BASE + COLLAPSE_TILES).
+RING_C1 = $(ASSETS)/ring.c1
+RING_C2 = $(ASSETS)/ring.c2
 # the one sprite slot map (M5 Task 1): build/slots.lua (the MAME probes
 # dofile it) and build/slots.json (the Python checkers load it) are
 # generated from src/slots.h, the only place slot numbers are defined.
-# SLOTS_NSTARS passes a build's -DNSTARS override (the renumbering proof)
-# through to the generated files, so the probes read the same map the
-# cartridge compiled; NSTARS (the override) is a Makefile variable, NOT a
-# CFLAGS -D, so the C sources keep compiling with plain `make`.
 SLOTS_LUA  = $(BUILDDIR)/slots.lua
 SLOTS_JSON = $(BUILDDIR)/slots.json
 SHIP_GIF = $(ASSETS)/ship.gif
@@ -73,12 +95,6 @@ MIS_SHEETS = $(addprefix $(ASSETS)/,mis_l.gif mis_m.gif mis_s.gif expl.gif)
 BROKEN_PART  = $(ASSETS)/broken.c1
 BROKEN_MAP   = $(BUILDDIR)/broken_map.h
 BROKEN_C2    = $(ASSETS)/broken.c2
-# M5 Task 2: the stars' tables (positions, palette, the picture's tile
-# number) and the C ROM tile itself, both from tools/render_stars.py: one
-# tile right after the broken sheet (STAR_TILE_BASE), in c1/c2 byte pairs.
-STARS_MAP   = $(BUILDDIR)/stars_map.h
-STARS_C1    = $(ASSETS)/stars.c1
-STARS_C2    = $(ASSETS)/stars.c2
 # M5 Task 3: the radar's per-ring and per-step tables (tools/gen_radar.py,
 # reading the constants from src/radar.h), used by src/radar.c's per-frame
 # 16-bit maths.
@@ -88,50 +104,125 @@ RADAR_TABLES = $(BUILDDIR)/radar_tables.h
 # per-(dx,dy) heading tiles, solved against the Neo Geo's zoom tables, all
 # by tools/render_radar.py (from src/radar.h's constants and the "000-lo.lo"
 # zoom table in aes.zip). The map header (tile bases + the palette) and the
-# c1/c2 payloads join the C ROM right after the stars, the radar's part of
-# CROMSIZE (2 MB) budget.
+# c1/c2 payloads join the C ROM right after the broken sheet (dome-scenery
+# Task 4 retired the star tile), the radar's part of CROMSIZE (2 MB) budget.
 RADAR_MAP    = $(BUILDDIR)/radar_map.h
 RADAR_C1     = $(ASSETS)/radar-frame.c1 $(ASSETS)/radar-stick.c1 $(ASSETS)/radar-head.c1
 RADAR_C2     = $(ASSETS)/radar-frame.c2 $(ASSETS)/radar-stick.c2 $(ASSETS)/radar-head.c2
-# M7 Task 1: the sound pipeline. tools/render_sfx.py renders the five
-# Vectrex effects as mono 16-bit WAVs at 187500 Hz (the AY's clock / 8);
-# sox resamples them to 18500 Hz, the ADPCM-A encoder's rate; vromtool.py
-# packs them into the 524288-byte V ROM and emits build/samples.inc, the
-# START/STOP ASM defines sound/user_commands.s includes. The M ROM is
-# nullsound + user_commands.s (the command table: 3 reset, 4..8 play the
-# samples), assembled/linked/objcopied instead of the stock
-# nullsound_driver.ihx.
-SFX_RAW      = $(addprefix $(BUILDDIR)/sfx-raw/,fire.wav jump.wav hit.wav crack.wav pip.wav)
-SFX_DIR      = $(BUILDDIR)/sfx
-SFX_WAVS     = $(addprefix $(SFX_DIR)/,fire.wav jump.wav hit.wav crack.wav pip.wav)
-SFX_MAP      = sound/samples-map.yaml
+# dome-scenery Task 5: the ground — one static block of 20 x 8 tiles from
+# tools/render_scenery.py (the orchestrator's art; this Makefile only gives
+# it paths), its map header (the block's place/size and the two palettes)
+# and the c1/c2 payloads. The parts join the C ROM AFTER the radar's (see
+# the rule below): src/ground.c adds RADAR_HEAD_TILE_BASE +
+# RADAR_HEAD_TILES to the header's relative tile numbers, so the tile at
+# each number is exactly the picture's tile.
+GROUND_MAP   = $(BUILDDIR)/ground_map.h
+GROUND_C1    = $(ASSETS)/ground.c1
+GROUND_C2    = $(ASSETS)/ground.c2
+# dome-scenery Task 6: the mountains — a 640 px panorama of 40 x 3 tiles
+# from tools/render_mountains.py (the orchestrator's art; this Makefile only
+# gives it paths), its map header (size, place and palette) and the c1/c2
+# payloads. The part joins the C ROM AFTER the ground's (see the rule
+# below): src/mountains.c adds RADAR_HEAD_TILE_BASE + RADAR_HEAD_TILES +
+# GROUND_TILES, so the tile at each relative number is the picture's tile.
+MTN_MAP      = $(BUILDDIR)/mountain_map.h
+MTN_C1       = $(ASSETS)/mountain.c1
+MTN_C2       = $(ASSETS)/mountain.c2
+# dome-scenery Task 7: the console — a dark control panel across the bottom,
+# angled up beside the dome, from tools/render_console.py (the orchestrator's
+# art; this Makefile only gives it paths), its map header (per column the top
+# y, the tile rows, the first tile in the part, and the palette) and the
+# c1/c2 payloads. The part joins the C ROM AFTER the mountains' (see the rule
+# below): src/console.c adds RADAR_HEAD_TILE_BASE + RADAR_HEAD_TILES +
+# GROUND_TILES + MTN_TILES, so the tile at each relative number is the
+# picture's tile.
+CON_MAP      = $(BUILDDIR)/console_map.h
+CON_C1       = $(ASSETS)/console.c1
+CON_C2       = $(ASSETS)/console.c2
+# dome-scenery Task 11: the props (the 19 trees and rocks) — the map header
+# src/props_layout.c reads (per prop, per angle: x, y, se; the pictures and
+# their anchors; the palettes; the shadow table) and the c1/c2 payloads.
+# Dome-scenery Task 12 puts the part in the cart (after the console's in
+# CROM1_PARTS/CROM2_PARTS) and links src/props_layout.c: src/props.c draws
+# the props from it and src/props.h's PROP_TILE_BASE adds the part base.
+PROPS_MAP    = $(BUILDDIR)/props_map.h
+PROPS_C1     = $(ASSETS)/props.c1
+PROPS_C2     = $(ASSETS)/props.c2
+# Task P2: the per-angle layout, generated on the host from
+# src/props_layout.c (tests/props_table_gen.c) and read by src/props.c.
+PROPS_TABLE_H = $(BUILDDIR)/props_table.h
+# dome-scenery Task 17: the band of towns and forests — a 768 px panorama of
+# 48 x 2 tiles from tools/render_band.py (the orchestrator's art; this
+# Makefile only gives it paths), its map header (size, place and palette) and
+# the c1/c2 payloads. The part joins the C ROM LAST (after the props' in
+# CROM1_PARTS/CROM2_PARTS) so no existing tile base moves: src/band.c adds
+# PROP_TILE_BASE + PROP_TILES, so the tile at each relative number is the
+# picture's tile.
+BAND_MAP      = $(BUILDDIR)/band_map.h
+BAND_C1       = $(ASSETS)/band.c1
+BAND_C2       = $(ASSETS)/band.c2
+# the collapse's ruin (the collapse redo's Task C1): one 8 x 6-tile picture
+# for every dome angle, from tools/render_collapse.py (the orchestrator's
+# art; this Makefile only gives it paths). The part joins the C ROM LAST,
+# after the band (the order CROM1_PARTS / CROM2_PARTS list), so no existing
+# tile base moves. C1 uses only the ruin's numbers; the rest of the header
+# is for Tasks C2-C4. src/dome.h adds BAND_TILE_BASE + BAND_TILES.
+COLLAPSE_MAP  = $(BUILDDIR)/collapse_map.h
+COLLAPSE_C1   = $(ASSETS)/collapse.c1
+COLLAPSE_C2   = $(ASSETS)/collapse.c2
+# R1/K1: the sound pipeline. tools/synth_sfx.py renders the game's
+# move/jump/fire/hit/crack and the initials picker's tick/type/bell/
+# backspace as mono 16-bit WAVs at 18500 Hz (the ADPCM-A encoder's rate);
+# the lock-on pip stays tools/render_sfx.py's (187500 Hz, resampled by
+# sox). vromtool.py packs them into the 524288-byte V ROM and emits
+# build/samples.inc, the START/STOP ASM defines sound/user_commands.s
+# includes. The M ROM is nullsound + user_commands.s (the command table: 3
+# reset, 4..9 the game's samples, 10..13 the picker's), assembled/linked/
+# objcopied instead of the stock nullsound_driver.ihx.
+SFX_SYNTH_RAW = $(addprefix $(BUILDDIR)/sfx-synth/,move.wav jump.wav fire.wav hit.wav crack.wav tick.wav bell.wav backspace.wav)
+# the picked letter's typewriter strike is a CC0 recording (CREDITS.md)
+SFX_ASSET_RAW = assets/sfx/type.wav
+SFX_VEC_RAW   = $(BUILDDIR)/sfx-vectrex/pip.wav
+SFX_RAW       = $(SFX_SYNTH_RAW) $(SFX_VEC_RAW) $(SFX_ASSET_RAW)
+SFX_DIR       = $(BUILDDIR)/sfx
+SFX_WAVS      = $(addprefix $(SFX_DIR)/,move.wav jump.wav fire.wav hit.wav crack.wav pip.wav tick.wav type.wav bell.wav backspace.wav)
+SFX_MAP       = sound/samples-map.yaml
 SAMPLES_INC  = $(BUILDDIR)/samples.inc
 SOUND_REL    = $(BUILDDIR)/user_commands.rel
 SOUND_IHX    = $(BUILDDIR)/sound_driver.ihx
 
 # generated headers every object may include (later tasks add to this)
-GEN_HEADERS = $(FIX_PAL) $(DOME_MAP) $(DOME_PAL) $(CELLS_H) $(SHIP_MAP) $(SHIP_PAL) $(MIS_TABLES) $(MIS_MAP) $(BROKEN_MAP) $(STARS_MAP) $(STARS_C1) $(STARS_C2) $(RADAR_TABLES) $(RADAR_MAP) $(RADAR_C1) $(RADAR_C2)
-CROM1_PARTS = $(DOME_C1) $(SHIP_C1) $(MIS_SHEETS:.gif=.c1) $(BROKEN_PART) $(STARS_C1) $(RADAR_C1)
-CROM2_PARTS = $(DOME_C2) $(SHIP_C2) $(MIS_SHEETS:.gif=.c2) $(BROKEN_C2) $(STARS_C2) $(RADAR_C2)
+GEN_HEADERS = $(FIX_PAL) $(TITLE_FONT_H) $(DOME_MAP) $(DOME_PAL) $(CELLS_H) $(DEMO_MAP) $(RING_MAP) $(RING_C1) $(RING_C2) $(SHIP_MAP) $(SHIP_PAL) $(MIS_TABLES) $(MIS_MAP) $(BROKEN_MAP) $(RADAR_TABLES) $(RADAR_MAP) $(RADAR_C1) $(RADAR_C2) $(GROUND_MAP) $(GROUND_C1) $(GROUND_C2) $(MTN_MAP) $(MTN_C1) $(MTN_C2) $(CON_MAP) $(CON_C1) $(CON_C2) $(PROPS_MAP) $(PROPS_C1) $(PROPS_C2) $(BAND_MAP) $(BAND_C1) $(BAND_C2) $(COLLAPSE_MAP) $(COLLAPSE_C1) $(COLLAPSE_C2)
+CROM1_PARTS = $(DOME_C1) $(SHIP_C1) $(MIS_SHEETS:.gif=.c1) $(BROKEN_PART) $(RADAR_C1) $(GROUND_C1) $(MTN_C1) $(CON_C1) $(PROPS_C1) $(BAND_C1) $(COLLAPSE_C1) $(RING_C1)
+CROM2_PARTS = $(DOME_C2) $(SHIP_C2) $(MIS_SHEETS:.gif=.c2) $(BROKEN_C2) $(RADAR_C2) $(GROUND_C2) $(MTN_C2) $(CON_C2) $(PROPS_C2) $(BAND_C2) $(COLLAPSE_C2) $(RING_C2)
 
 .PHONY: all cart test clean boot-test mame
 all: cart
 $(ASSETS):
 	mkdir -p $@
 
-# slots.lua/json are generated from src/slots.h plus the build's NSTARS
-# override; the stamp (named for the effective NSTARS) forces a regenerate
-# when the value changes between invocations (the -DNSTARS=16 proof), while
-# a build whose NSTARS did not change stays incremental.
-SLOTS_STAMP = $(BUILDDIR)/.slots-nstars-$(if $(NSTARS),$(NSTARS),12)
-$(SLOTS_LUA) $(SLOTS_JSON) &: src/slots.h tools/gen_slots.py $(SLOTS_STAMP) | $(BUILDDIR)
-	python3 tools/gen_slots.py $(BUILDDIR) $(if $(SLOTS_NSTARS),$(SLOTS_NSTARS),$(NSTARS))
-$(SLOTS_STAMP):
-	mkdir -p $(BUILDDIR)
-	rm -f $(BUILDDIR)/.slots-nstars-*   # a value switch removes the other
-	touch $@                           # stamps, so the next build of a
-	                                   # different NSTARS regenerates the
-	                                   # files (the renumbering proof)
+# slots.lua/json are generated from src/slots.h (the one slot map).
+$(SLOTS_LUA) $(SLOTS_JSON) &: src/slots.h $(DOME_MAP) tools/gen_slots.py | $(BUILDDIR)
+	python3 tools/gen_slots.py $(BUILDDIR)
+
+# Attract Task A3: the demo script (tools/gen_demo.py is the orchestrator's;
+# this rule only gives it the paths). The generator replays the host models
+# and writes the cart's input runs (build/demo_map.h, included by
+# src/demo.c) and the events the demo boot-test states (build/demo.json).
+$(DEMO_MAP) $(DEMO_JSON) &: tools/gen_demo.py tests/hud_model.py \
+		tests/mis_model.py tests/radar_model.py tests/rules_model.py \
+		tests/ship_model.py tests/fixtures/vectrex_cells.json $(MIS_TABLES) | $(BUILDDIR)
+	python3 tools/gen_demo.py $(DEMO_MAP) --json $(DEMO_JSON) > /dev/null
+
+# high-score boards Task B5: the ring's header (entry.c reads RING_N,
+# RING_SUB, RING_PHASES, RING_ERASE, RING_END and ring_code from it) and
+# the sheet Task B6 joins to the C ROM. The generator is the orchestrator's;
+# this rule only gives it the paths.
+$(RING_GIF) $(RING_MAP) &: tools/render_ring.py tools/generate_srom.py | $(ASSETS) $(BUILDDIR)
+	python3 tools/render_ring.py $(RING_GIF) $(RING_MAP)
+
+$(RING_C1) $(RING_C2) &: $(RING_GIF)
+	$(BIN)/tiletool.py -c --sprite $< -o $(RING_C1) $(RING_C2)
 
 $(DOME_GIF) $(DOME_MAP) &: tools/render_dome.py tools/geometry.py | $(ASSETS)
 	python3 tools/render_dome.py $(DOME_GIF) $(DOME_MAP)
@@ -149,9 +240,13 @@ $(DOME_PAL): $(DOME_GIF)
 $(CELLS_H): tools/gen_cells.py tools/geometry.py | $(BUILDDIR)
 	python3 tools/gen_cells.py $@ > /dev/null
 
-# the ship: 48 latitude views, tiles right after the dome's
-$(SHIP_GIF) $(SHIP_MAP) &: tools/render_ship.py tools/render_dome.py tools/geometry.py | $(ASSETS)
-	python3 tools/render_ship.py $(SHIP_GIF) $(SHIP_MAP) > /dev/null
+# the ship: the 1950s hovercraft, 48 latitude views x 13 pictures (REST,
+# WALK, JUMP, HEAVE) and its 64 bolt tiles, right after the dome's
+# (tools/render_hovercraft.py is the orchestrator's; this rule only gives it
+# the paths)
+$(SHIP_GIF) $(SHIP_MAP) &: tools/render_hovercraft.py tools/gen_missiles.py \
+		tools/vectrex_missiles.json tools/render_dome.py tools/geometry.py | $(ASSETS)
+	python3 tools/render_hovercraft.py $(SHIP_GIF) $(SHIP_MAP) > /dev/null
 
 $(SHIP_C1) $(SHIP_C2) &: $(SHIP_GIF)
 	$(BIN)/tiletool.py -c --sprite $< -o $(SHIP_C1) $(SHIP_C2)
@@ -164,9 +259,10 @@ $(SHIP_PAL): $(SHIP_GIF)
 $(MIS_TABLES): tools/gen_missiles.py tools/geometry.py tools/vectrex_missiles.json | $(BUILDDIR)
 	python3 tools/gen_missiles.py $@ > /dev/null
 
-$(MIS_SHEETS) $(MIS_MAP) &: tools/render_missiles.py tools/gen_missiles.py tools/render_ship.py \
-		tools/render_dome.py tools/geometry.py tools/vectrex_missiles.json | $(ASSETS)
-	python3 tools/render_missiles.py $(ASSETS) $(MIS_MAP) > /dev/null
+$(MIS_SHEETS) $(MIS_MAP) &: tools/render_rockets.py tools/render_missiles.py tools/gen_missiles.py \
+		tools/render_hovercraft.py tools/render_dome.py tools/geometry.py tools/vectrex_missiles.json \
+		| $(ASSETS)
+	python3 tools/render_rockets.py $(ASSETS) $(MIS_MAP) > /dev/null
 
 # broken-window overlays: the art + the per-cell tables (M4-fixes Task 3).
 # render_broken.py writes broken.c1/c2 itself — the tiles are packed in the
@@ -175,36 +271,23 @@ $(MIS_SHEETS) $(MIS_MAP) &: tools/render_missiles.py tools/gen_missiles.py tools
 # express, and that packing is what keeps the C ROM as small as the content
 # allows (the old sheet's 20,735 padded places are gone; the whole C ROM is
 # 1.22 MB, so CROMSIZE = 2 MB — the smallest power of two that fits).
-$(BROKEN_PART) $(BROKEN_C2) $(BROKEN_MAP) &: tools/render_broken.py tools/render_missiles.py tools/render_ship.py \
-		tools/render_dome.py tools/gen_missiles.py tools/geometry.py $(SLOTS_JSON) | $(ASSETS)
+$(BROKEN_PART) $(BROKEN_C2) $(BROKEN_MAP) &: tools/render_broken.py tools/render_rockets.py \
+		tools/render_missiles.py tools/render_hovercraft.py tools/render_dome.py \
+		tools/gen_missiles.py tools/geometry.py $(SLOTS_JSON) | $(ASSETS)
 	python3 tools/render_broken.py $(ASSETS) $(BROKEN_MAP) > /dev/null
-
-# the stars: the map header is generated first (the .c1/.c2 need its tile
-# number only to verify it — render_stars.py prints it); the stamp forces a
-# regenerate when NSTARS changes (so a -DNSTARS=16 build's stars.c1 sits at
-# the right offset), see the STARS_C1 comment above. The stamp is
-# order-only, so a build whose NSTARS did not change stays incremental.
-STARS_STAMP = $(BUILDDIR)/.stars-nstars-$(if $(NSTARS),$(NSTARS),12)
-$(STARS_MAP): tools/render_stars.py tools/render_broken.py $(SLOTS_JSON) | $(BUILDDIR) $(STARS_STAMP)
-	python3 tools/render_stars.py $@ > /dev/null
-$(STARS_C1) $(STARS_C2): tools/render_stars.py tools/render_broken.py $(SLOTS_JSON) $(STARS_MAP) | $(ASSETS) $(STARS_STAMP)
-	python3 tools/render_stars.py $(STARS_MAP) $(STARS_C1) $(STARS_C2) > /dev/null
-$(STARS_STAMP):
-	mkdir -p $(BUILDDIR)
-	rm -f $(BUILDDIR)/.stars-nstars-*   # as the slots stamp: a value switch
-	touch $@                           # invalidates the other stamps, so the
-	                                   # next build of the old value
-	                                   # regenerates (the renumbering proof)
 
 $(ASSETS)/%.c1 $(ASSETS)/%.c2: $(ASSETS)/%.gif
 	$(BIN)/tiletool.py -c --sprite $< -o $(ASSETS)/$*.c1 $(ASSETS)/$*.c2
 
 # the radar's pictures (M5 Task 4): one grouped rule emits the map header
 # and the three c1/c2 part pairs (frame, sticks, headings) in the C ROM
-# order, after the stars. The generator reads the constants from
+# order, after the broken sheet (the star tile is gone, Task 4). The
+# generator reads the constants from
 # src/radar.h and the Neo Geo's zoom table from aes.zip (the headings are
 # solved against it) and verifies its own output as it goes.
-$(RADAR_MAP) $(RADAR_C1) $(RADAR_C2) &: tools/render_radar.py tools/render_broken.py src/radar.h $(SLOTS_JSON) | $(BUILDDIR) $(ASSETS)
+$(RADAR_MAP) $(RADAR_C1) $(RADAR_C2) &: tools/render_radar.py tools/render_broken.py \
+		tools/render_hovercraft.py $(BROKEN_MAP) $(BROKEN_PART) src/radar.h $(SLOTS_JSON) \
+		| $(BUILDDIR) $(ASSETS)
 	python3 tools/render_radar.py $(RADAR_MAP) $(ASSETS)/radar-frame.c1 $(ASSETS)/radar-frame.c2 \
 		$(ASSETS)/radar-stick.c1 $(ASSETS)/radar-stick.c2 \
 		$(ASSETS)/radar-head.c1 $(ASSETS)/radar-head.c2 > /dev/null
@@ -215,6 +298,64 @@ $(RADAR_MAP) $(RADAR_C1) $(RADAR_C2) &: tools/render_radar.py tools/render_broke
 # src/radar.c's per-frame maths read
 $(RADAR_TABLES): tools/gen_radar.py tools/geometry.py tools/gen_missiles.py src/radar.h $(MIS_TABLES) | $(BUILDDIR)
 	python3 tools/gen_radar.py $@ > /dev/null
+
+# the ground's picture (dome-scenery Tasks 5 and 19): one rule emits the map
+# header and the c1/c2 payloads, after the radar's parts in the C ROM (the
+# order CROM1_PARTS / CROM2_PARTS list). Task 19's generator is
+# tools/render_ripple.py: the same block and tiles, re-indexed for the
+# palette rotation, plus the ripple banks/palettes/rotations. The generator
+# is the orchestrator's and is never edited for the picture or palette; this
+# rule only gives it the paths. It writes the header's tile numbers RELATIVE
+# to the ground part's first tile (0..GROUND_TILES-1); src/ground.c adds the
+# part base.
+$(GROUND_MAP) $(GROUND_C1) $(GROUND_C2) &: tools/render_ripple.py tools/render_scenery.py tools/render_dome.py tools/render_console.py tools/render_props.py tools/geometry.py tests/layout.py src/dome.h | $(BUILDDIR) $(ASSETS)
+	python3 tools/render_ripple.py $(GROUND_MAP) $(GROUND_C1) $(GROUND_C2)
+
+# the mountains' picture (dome-scenery Task 6): one rule emits the map
+# header and the c1/c2 payloads, after the ground's part in the C ROM (the
+# order CROM1_PARTS / CROM2_PARTS list). The generator is the
+# orchestrator's and is never edited for the picture or palette; this rule
+# only gives it the paths. It writes the header's tile numbers RELATIVE to
+# the mountain part's first tile (0..MTN_TILES-1); src/mountains.c adds the
+# part base.
+$(MTN_MAP) $(MTN_C1) $(MTN_C2) &: tools/render_mountains.py tools/render_scenery.py tools/render_dome.py tools/geometry.py | $(BUILDDIR) $(ASSETS)
+	python3 tools/render_mountains.py $(MTN_MAP) $(MTN_C1) $(MTN_C2)
+
+# the console's picture (dome-scenery Task 7): one rule emits the map header
+# and the c1/c2 payloads, after the mountains' part in the C ROM (the order
+# CROM1_PARTS / CROM2_PARTS list). The generator is the orchestrator's and is
+# never edited for the picture or palette; this rule only gives it the paths.
+# It writes the header's con_first[c] tile numbers RELATIVE to the console
+# part's first tile; src/console.c adds the part base.
+$(CON_MAP) $(CON_C1) $(CON_C2) &: tools/render_console.py tools/render_scenery.py tools/render_dome.py tools/geometry.py | $(BUILDDIR) $(ASSETS)
+	python3 tools/render_console.py $(CON_MAP) $(CON_C1) $(CON_C2)
+
+# the props' map and picture (dome-scenery Task 11): one rule emits the map
+# header and the c1/c2 payloads, from the orchestrator's generator (never
+# edited for the picture, palette or places; this rule only gives it the
+# paths). The header's tile numbers are RELATIVE to the props part's first
+# tile (0..PROP_TILES-1); Task 12's src/props.h adds PROP_TILE_BASE.
+$(PROPS_MAP) $(PROPS_C1) $(PROPS_C2) &: tools/render_props.py tools/render_scenery.py tools/render_dome.py tools/render_console.py tools/geometry.py tests/layout.py src/dome.h | $(BUILDDIR) $(ASSETS)
+	python3 tools/render_props.py $(PROPS_MAP) $(PROPS_C1) $(PROPS_C2)
+
+# the towns-and-forests band (dome-scenery Task 17): one rule emits the map
+# header and the c1/c2 payloads, LAST in the C ROM (the order CROM1_PARTS /
+# CROM2_PARTS list). The generator is the orchestrator's and is never edited
+# for the picture or palette; this rule only gives it the paths. It writes
+# the header's tile numbers RELATIVE to the band part's first tile
+# (0..BAND_TILES-1); src/band.c adds PROP_TILE_BASE + PROP_TILES.
+$(BAND_MAP) $(BAND_C1) $(BAND_C2) &: tools/render_band.py tools/render_scenery.py tools/render_dome.py tools/geometry.py | $(BUILDDIR) $(ASSETS)
+	python3 tools/render_band.py $(BAND_MAP) $(BAND_C1) $(BAND_C2)
+
+# the collapse's ruin (the collapse redo's Task C1): one rule emits the map
+# header and the c1/c2 payloads, LAST in the C ROM (the order CROM1_PARTS /
+# CROM2_PARTS list). The generator is the orchestrator's and is never edited
+# for the picture, palette or tables; this rule only gives it the paths.
+# The header's tile numbers are RELATIVE to the collapse part's first tile
+# (0..COLLAPSE_TILES-1); src/dome.c adds COLLAPSE_TILE_BASE
+# (BAND_TILE_BASE + BAND_TILES, src/dome.h).
+$(COLLAPSE_MAP) $(COLLAPSE_C1) $(COLLAPSE_C2) &: tools/render_collapse.py tools/render_dome.py tools/render_broken.py tools/render_radar.py tools/render_scenery.py tools/geometry.py tests/layout.py src/dome.h $(SLOTS_JSON) | $(BUILDDIR) $(ASSETS)
+	python3 tools/render_collapse.py $(COLLAPSE_MAP) $(COLLAPSE_C1) $(COLLAPSE_C2)
 
 $(BUILDDIR) $(ROMDIR):
 	mkdir -p $@
@@ -230,10 +371,12 @@ $(PROM1): $(ELF) | $(ROMDIR)
 	$(OBJCOPY68) -O binary -S -R .text2 --gap-fill 0xff --pad-to $(PROMSIZE) $< $@
 	dd if=$@ of=$@ conv=notrunc,swab status=none
 
-# S ROM: ASCII fix tiles (tile = character code)
-$(SROM1) $(FIX_PAL): tools/generate_srom.py src/title.h | $(ROMDIR) $(BUILDDIR)
-	python3 tools/generate_srom.py --ascii --output $(SROM1) --pal-header $(FIX_PAL)
-	@test $$(stat -c%s $(SROM1)) -eq 16384 || { echo "S ROM must be 16384 bytes"; exit 1; }
+# S ROM: ASCII fix tiles (tile = character code) plus, from tile 512, the
+# thick-outline title font (high-score boards Task B4). The old blocks stay
+# byte-identical; the S ROM grows to 128 KB (4096 tiles).
+$(SROM1) $(FIX_PAL) $(TITLE_FONT_H) &: tools/generate_srom.py src/title.h | $(ROMDIR) $(BUILDDIR)
+	python3 tools/generate_srom.py --ascii --output $(SROM1) --pal-header $(FIX_PAL) --title2-header $(TITLE_FONT_H)
+	@test $$(stat -c%s $(SROM1)) -eq 131072 || { echo "S ROM must be 131072 bytes"; exit 1; }
 
 # C ROM: 16 KiB of BIOS tiles (zero), then game tiles (later tasks), padded
 $(CROM1): $(CROM1_PARTS) | $(ROMDIR)
@@ -266,19 +409,26 @@ $(SOUND_IHX): $(SOUND_REL) $(NGZ80LIB)/nullsound.lib | $(BUILDDIR)
 $(SOUND_REL): sound/user_commands.s $(SAMPLES_INC) | $(BUILDDIR)
 	$(Z80SDAS) -g -l -p -u -I$(NGZ80INC) -I$(BUILDDIR) -o $@ $<
 
-# V ROM: the five effects, packed by vromtool.py into the fixed 524288-byte
-# V ROM (--roms actually writes it; --asm alone only emits the defines).
-# build/samples.inc carries the START/STOP defines the sound driver reads.
+# V ROM: the game's six effects plus the picker's four, packed by
+# vromtool.py into the fixed 524288-byte V ROM (--roms actually writes it;
+# --asm alone only emits the defines). build/samples.inc carries the
+# START/STOP defines the sound driver reads.
 $(VROM1): $(SOUND_IHX) $(SAMPLES_INC) | $(ROMDIR)
 	$(BIN)/vromtool.py --roms -s 524288 -n 1 $(SFX_MAP) -o $(VROM1) -m $(SAMPLES_INC)
 $(SAMPLES_INC): $(SFX_WAVS) $(SFX_MAP) | $(BUILDDIR)
 	$(BIN)/vromtool.py --asm -s 524288 $(SFX_MAP) -o $(VROM1) -m $@
-$(SFX_WAVS): $(SFX_RAW) | $(SFX_DIR)   # prereqs only; the pattern rule does the sox
-$(SFX_DIR)/%.wav: $(BUILDDIR)/sfx-raw/%.wav | $(SFX_DIR)
+$(SFX_WAVS): $(SFX_RAW) | $(SFX_DIR)   # prereqs only; the rules below do the sox
+$(SFX_DIR)/%.wav: $(BUILDDIR)/sfx-synth/%.wav | $(SFX_DIR)
 	sox $< -r 18500 $@
-$(SFX_RAW): tools/render_sfx.py | $(BUILDDIR) $(BUILDDIR)/sfx-raw
-	python3 tools/render_sfx.py $(BUILDDIR)/sfx-raw
-$(SFX_DIR) $(BUILDDIR)/sfx-raw:
+$(SFX_DIR)/pip.wav: $(BUILDDIR)/sfx-vectrex/pip.wav | $(SFX_DIR)
+	sox $< -r 18500 $@
+$(SFX_DIR)/type.wav: $(SFX_ASSET_RAW) | $(SFX_DIR)
+	sox $< -r 18500 $@
+$(SFX_SYNTH_RAW) &: tools/synth_sfx.py | $(BUILDDIR) $(BUILDDIR)/sfx-synth
+	python3 tools/synth_sfx.py $(BUILDDIR)/sfx-synth
+$(SFX_VEC_RAW): tools/render_sfx.py | $(BUILDDIR) $(BUILDDIR)/sfx-vectrex
+	python3 tools/render_sfx.py $(BUILDDIR)/sfx-vectrex
+$(SFX_DIR) $(BUILDDIR)/sfx-synth $(BUILDDIR)/sfx-vectrex:
 	mkdir -p $@
 
 # the SOUND_TEST build: the M7 Task 1 test cart. -DSOUND_TEST main.o/flow.o
@@ -294,9 +444,14 @@ $(BUILDDIR)/main-soundtest.o: src/main.c $(wildcard src/*.h) $(GEN_HEADERS) | $(
 	$(CC68K) $(CFLAGS) -DSOUND_TEST -c src/main.c -o $@
 $(BUILDDIR)/flow-soundtest.o: src/flow.c $(wildcard src/*.h) $(GEN_HEADERS) | $(BUILDDIR)
 	$(CC68K) $(CFLAGS) -DSOUND_TEST -c src/flow.c -o $@
-$(SNDTEST_ELF): $(OBJS) $(BUILDDIR)/main-soundtest.o $(BUILDDIR)/flow-soundtest.o
-	$(CC68K) -o $@ $(filter-out $(BUILDDIR)/main.o $(BUILDDIR)/flow.o,$(OBJS)) \
-		$(BUILDDIR)/main-soundtest.o $(BUILDDIR)/flow-soundtest.o $(LDFLAGS)
+# the -DSOUND_TEST carts need a collapse stub with no BSS: their sound-test
+# RAM log lives in flow.o, and collapse.o's RAM would shift it (the MVS
+# BIOS's garbage at the shifted address passes the sound probe's gates).
+$(BUILDDIR)/collapse-soundtest.o: src/collapse.c $(wildcard src/*.h) $(GEN_HEADERS) | $(BUILDDIR)
+	$(CC68K) $(CFLAGS) -DSOUND_TEST -c src/collapse.c -o $@
+$(SNDTEST_ELF): $(OBJS) $(BUILDDIR)/collapse-soundtest.o $(BUILDDIR)/main-soundtest.o $(BUILDDIR)/flow-soundtest.o
+	$(CC68K) -o $@ $(filter-out $(BUILDDIR)/main.o $(BUILDDIR)/flow.o $(BUILDDIR)/collapse.o,$(OBJS)) \
+		$(BUILDDIR)/collapse-soundtest.o $(BUILDDIR)/main-soundtest.o $(BUILDDIR)/flow-soundtest.o $(LDFLAGS)
 $(SNDTEST_PROM): $(SNDTEST_ELF) | $(ROMDIR)
 	$(OBJCOPY68) -O binary -S -R .text2 --gap-fill 0xff --pad-to $(PROMSIZE) $< $@
 	dd if=$@ of=$@ conv=notrunc,swab status=none
@@ -322,9 +477,9 @@ $(BUILDDIR)/flow-soundradar.o: src/flow.c $(wildcard src/*.h) $(GEN_HEADERS) | $
 	$(CC68K) $(CFLAGS) -DSOUND_TEST -DRADAR_TEST -c src/flow.c -o $@
 $(BUILDDIR)/main-soundradar.o: src/main.c $(wildcard src/*.h) $(GEN_HEADERS) | $(BUILDDIR)
 	$(CC68K) $(CFLAGS) -DSOUND_TEST -c src/main.c -o $@
-$(SNDRAD_ELF): $(OBJS) $(BUILDDIR)/main-soundradar.o $(BUILDDIR)/flow-soundradar.o
-	$(CC68K) -o $@ $(filter-out $(BUILDDIR)/main.o $(BUILDDIR)/flow.o,$(OBJS)) \
-		$(BUILDDIR)/main-soundradar.o $(BUILDDIR)/flow-soundradar.o $(LDFLAGS)
+$(SNDRAD_ELF): $(OBJS) $(BUILDDIR)/collapse-soundtest.o $(BUILDDIR)/main-soundradar.o $(BUILDDIR)/flow-soundradar.o
+	$(CC68K) -o $@ $(filter-out $(BUILDDIR)/main.o $(BUILDDIR)/flow.o $(BUILDDIR)/collapse.o,$(OBJS)) \
+		$(BUILDDIR)/collapse-soundtest.o $(BUILDDIR)/main-soundradar.o $(BUILDDIR)/flow-soundradar.o $(LDFLAGS)
 $(SNDRAD_PROM): $(SNDRAD_ELF) | $(ROMDIR)
 	$(OBJCOPY68) -O binary -S -R .text2 --gap-fill 0xff --pad-to $(PROMSIZE) $< $@
 	dd if=$@ of=$@ conv=notrunc,swab status=none
@@ -391,6 +546,46 @@ $(FRMMARK_CART): $(FRMMARK_PROM) $(SROM1) $(CROM1) $(CROM2) $(MROM1) $(VROM1)
 		-n esrg-framemark -l "E-SRG (frame mark)" -o $@
 .PHONY: framemark-cart
 framemark-cart: $(FRMMARK_CART)
+
+# Attract Task A3: the pre-A3 title-scene and gameplay boot tests were
+# calibrated on a static fresh title. Build the same cart with the demo
+# compiled out (STATIC_TITLE) for those legs; the demo legs and the
+# flow/Start legs keep the normal cart (and the normal FRAME_MARK cart).
+STATIC_ELF = $(BUILDDIR)/rom-static.elf
+STATIC_PROM = $(ROMDIR)/esrg-static-p1.p1
+STATIC_CART = $(ROMDIR)/esrg-static.zip
+$(BUILDDIR)/flow-static.o: src/flow.c $(wildcard src/*.h) $(GEN_HEADERS) | $(BUILDDIR)
+	$(CC68K) $(CFLAGS) -DSTATIC_TITLE -c src/flow.c -o $@
+$(STATIC_ELF): $(OBJS) $(BUILDDIR)/flow-static.o
+	$(CC68K) -o $@ $(filter-out $(BUILDDIR)/flow.o,$(OBJS)) \
+		$(BUILDDIR)/flow-static.o $(LDFLAGS)
+$(STATIC_PROM): $(STATIC_ELF) | $(ROMDIR)
+	$(OBJCOPY68) -O binary -S -R .text2 --gap-fill 0xff --pad-to $(PROMSIZE) $< $@
+	dd if=$@ of=$@ conv=notrunc,swab status=none
+$(STATIC_CART): $(STATIC_PROM) $(SROM1) $(CROM1) $(CROM2) $(MROM1) $(VROM1)
+	$(BIN)/romtool.py -b cartridge -f zip -p $(STATIC_PROM) -s $(SROM1) \
+		-c $(CROM1) $(CROM2) -m $(MROM1) -v $(VROM1) \
+		-n esrg-static -l "E-SRG (static title)" -o $@
+.PHONY: static-cart
+static-cart: $(STATIC_CART)
+
+STATIC_FM_ELF = $(BUILDDIR)/rom-staticfm.elf
+STATIC_FM_PROM = $(ROMDIR)/esrg-staticfm-p1.p1
+STATIC_FM_CART = $(ROMDIR)/esrg-staticfm.zip
+$(BUILDDIR)/flow-staticfm.o: src/flow.c $(wildcard src/*.h) $(GEN_HEADERS) | $(BUILDDIR)
+	$(CC68K) $(CFLAGS) -DSTATIC_TITLE -DFRAME_MARK -c src/flow.c -o $@
+$(STATIC_FM_ELF): $(OBJS) $(BUILDDIR)/main-framemark.o $(BUILDDIR)/flow-staticfm.o
+	$(CC68K) -o $@ $(filter-out $(BUILDDIR)/main.o $(BUILDDIR)/flow.o,$(OBJS)) \
+		$(BUILDDIR)/main-framemark.o $(BUILDDIR)/flow-staticfm.o $(LDFLAGS)
+$(STATIC_FM_PROM): $(STATIC_FM_ELF) | $(ROMDIR)
+	$(OBJCOPY68) -O binary -S -R .text2 --gap-fill 0xff --pad-to $(PROMSIZE) $< $@
+	dd if=$@ of=$@ conv=notrunc,swab status=none
+$(STATIC_FM_CART): $(STATIC_FM_PROM) $(SROM1) $(CROM1) $(CROM2) $(MROM1) $(VROM1)
+	$(BIN)/romtool.py -b cartridge -f zip -p $(STATIC_FM_PROM) -s $(SROM1) \
+		-c $(CROM1) $(CROM2) -m $(MROM1) -v $(VROM1) \
+		-n esrg-staticfm -l "E-SRG (static title, frame mark)" -o $@
+.PHONY: staticfm-cart
+staticfm-cart: $(STATIC_FM_CART)
 
 # the M4-fixes Task 3 frame-time build: CRACK_TEST + FRAME_MARK together, so
 # the measurement runs with all 38 broken tiles plus missiles — the worst
@@ -474,6 +669,34 @@ $(BUILDDIR)/test_ship: tests/test_ship.c src/ship.c src/ship.h $(CELLS_H) | $(BU
 	$(HOSTCC) $(HOSTCFLAGS) tests/test_ship.c src/ship.c -o $@
 $(BUILDDIR)/ship_sim: tests/ship_sim.c src/ship.c src/ship.h $(CELLS_H) | $(BUILDDIR)
 	$(HOSTCC) $(HOSTCFLAGS) tests/ship_sim.c src/ship.c -o $@
+# Task S2: the frame choice, host-built against the real ship.c / missiles.c /
+# rules.c. tests/check_spider.py --host holds it to tests/ship_anim_model.py.
+$(BUILDDIR)/spider_sim: tests/spider_sim.c src/ship.c src/ship.h src/missiles.c \
+		src/missiles.h src/rules.c src/rules.h src/ship_gfx.c src/ship_gfx.h \
+		$(CELLS_H) $(MIS_TABLES) $(SHIP_MAP) $(SHIP_PAL) | $(BUILDDIR)
+	$(HOSTCC) $(HOSTCFLAGS) tests/spider_sim.c src/ship.c src/missiles.c \
+		src/rules.c src/ship_gfx.c -o $@
+
+# dome-scenery Task 11: the props' layout, pure logic, held to
+# tests/props_model.py by tests/test_props.py.
+$(BUILDDIR)/props_sim: tests/props_sim.c src/props_layout.c src/props_layout.h $(PROPS_MAP) $(PROPS_C1) $(PROPS_C2) | $(BUILDDIR)
+	$(HOSTCC) $(HOSTCFLAGS) tests/props_sim.c src/props_layout.c -o $@
+# Task P2: the generator writes build/props_table.h from props_layout();
+# the same source built with -DPROPS_TABLE_CHECK is the host test that
+# every field of both tables equals props_layout() at every angle.
+$(BUILDDIR)/props_table_gen: tests/props_table_gen.c src/props_layout.c src/props_layout.h $(PROPS_MAP) $(PROPS_C1) $(PROPS_C2) | $(BUILDDIR)
+	$(HOSTCC) $(HOSTCFLAGS) tests/props_table_gen.c src/props_layout.c -o $@
+$(PROPS_TABLE_H): $(BUILDDIR)/props_table_gen | $(BUILDDIR)
+	$(BUILDDIR)/props_table_gen > $@.tmp && mv $@.tmp $@
+$(BUILDDIR)/test_props_table: tests/props_table_gen.c $(PROPS_TABLE_H) src/props_layout.c src/props_layout.h $(PROPS_MAP) $(PROPS_C1) $(PROPS_C2) | $(BUILDDIR)
+	$(HOSTCC) $(HOSTCFLAGS) -DPROPS_TABLE_CHECK tests/props_table_gen.c src/props_layout.c -o $@
+# the attract demo's skipped props commits (P1): src/props.c's real
+# prepare/commit against a VRAM model (tests/host_vram), every commit held
+# to the layout of the last prepared angle.
+$(BUILDDIR)/test_props_commit: tests/test_props_commit.c src/props.c src/props.h src/props_layout.c src/props_layout.h tests/host_vram/ngdevkit/neogeo.h $(GEN_HEADERS) $(PROPS_TABLE_H) | $(BUILDDIR)
+	$(HOSTCC) -std=c99 -Wall -Wextra -Itests/host_vram -Isrc -I$(BUILDDIR) tests/test_props_commit.c src/props.c src/props_layout.c -o $@
+# Task P2: src/props.c includes the generated table.
+$(BUILDDIR)/props.o: $(PROPS_TABLE_H)
 MIS_HOST = src/ship.c src/ship.h src/missiles.c src/missiles.h src/rules.c src/rules.h $(CELLS_H) $(MIS_TABLES)
 $(BUILDDIR)/test_missiles: tests/test_missiles.c $(MIS_HOST) | $(BUILDDIR)
 	$(HOSTCC) $(HOSTCFLAGS) tests/test_missiles.c src/ship.c src/missiles.c src/rules.c -o $@
@@ -489,6 +712,15 @@ $(BUILDDIR)/rules_sim: tests/rules_sim.c $(RULES_HOST) $(RADAR_HOST) | $(BUILDDI
 	$(HOSTCC) $(HOSTCFLAGS) tests/rules_sim.c src/ship.c src/missiles.c src/rules.c src/radar.c -o $@
 $(BUILDDIR)/test_rules: tests/test_rules.c $(RULES_HOST) | $(BUILDDIR)
 	$(HOSTCC) $(HOSTCFLAGS) tests/test_rules.c src/ship.c src/missiles.c src/rules.c -o $@
+
+# R1: the frame's sound command list, host-built from the real ship.c /
+# missiles.c / rules.c / radar.c and src/sound.h's sound_frame_cmds (the
+# same function flow.c's game_sound calls), held to tests/sound_model.py by
+# tests/test_sound_host.py.
+$(BUILDDIR)/sound_sim: tests/sound_sim.c src/sound.h src/ship.h src/missiles.h \
+		src/rules.h src/radar.h src/ship.c src/missiles.c src/rules.c src/radar.c \
+		$(CELLS_H) $(MIS_TABLES) $(RADAR_TABLES) | $(BUILDDIR)
+	$(HOSTCC) $(HOSTCFLAGS) tests/sound_sim.c src/ship.c src/missiles.c src/rules.c src/radar.c -o $@
 
 CRACKS_HOST = src/cracks.c src/cracks.h src/dome.h src/mis_gfx.h src/ship_gfx.h $(CELLS_H) $(BROKEN_MAP)
 # the broken test links dome.c (dome_draw_gone) + rules.c (the collapse
@@ -510,13 +742,9 @@ $(BUILDDIR)/collapse_sim: tests/collapse_sim.c $(COLLAPSE_HOST) | $(BUILDDIR)
 	$(HOSTCC) $(HOSTCFLAGS) tests/collapse_sim.c src/ship.c src/missiles.c src/rules.c -o $@
 
 HUD_HOST = src/ship.c src/ship.h src/missiles.c src/missiles.h src/rules.c src/rules.h \
-	src/hud.c src/hud.h $(CELLS_H) $(MIS_TABLES) $(FIX_PAL)
+	src/hud.c src/hud.h src/fix.c src/fix.h $(CELLS_H) $(MIS_TABLES) $(FIX_PAL) $(TITLE_FONT_H)
 $(BUILDDIR)/test_hud: tests/test_hud.c $(HUD_HOST) | $(BUILDDIR)
 	$(HOSTCC) $(HOSTCFLAGS) tests/test_hud.c src/ship.c src/missiles.c src/rules.c src/hud.c src/fix.c -o $@
-
-STARS_HOST = src/stars.c src/stars.h $(STARS_MAP)
-$(BUILDDIR)/stars_sim: tests/stars_sim.c $(STARS_HOST) | $(BUILDDIR)
-	$(HOSTCC) $(HOSTCFLAGS) tests/stars_sim.c src/stars.c -o $@
 
 # the title's nine pages of fix text (M6 Task 5): pure logic, host-built,
 # held to tests/title_model.py by tests/test_title.py. The cart object is
@@ -524,22 +752,28 @@ $(BUILDDIR)/stars_sim: tests/stars_sim.c $(STARS_HOST) | $(BUILDDIR)
 $(BUILDDIR)/title_sim: tests/title_sim.c src/title.c src/title.h | $(BUILDDIR)
 	$(HOSTCC) $(HOSTCFLAGS) tests/title_sim.c src/title.c -o $@
 
-# the per-level high-score table (M6 Task 8): pure logic, host-built, held
-# to tests/best_model.py by tests/test_best.py. The cart object is built
-# too (SRCS picks src/best.c up) but unused until Task 9 keeps flow_best
-# in backup RAM.
-$(BUILDDIR)/best_sim: tests/best_sim.c src/best.c src/best.h src/missiles.h | $(BUILDDIR)
-	$(HOSTCC) $(HOSTCFLAGS) tests/best_sim.c src/best.c -o $@
+# high-score boards Task B1: the five-entry per-level board, pure logic,
+# host-built, held to tests/board_model.py by tests/test_board.py. Task B2
+# keeps it in flow_board in backup RAM / on the AES memory card and the
+# title shows each level's top entry.
+$(BUILDDIR)/board_sim: tests/board_sim.c src/board.c src/board.h src/missiles.h | $(BUILDDIR)
+	$(HOSTCC) $(HOSTCFLAGS) tests/board_sim.c src/board.c -o $@
+
+# high-score boards Task B5: the initials ring's state machine, pure logic,
+# host-built, held to tests/entry_model.py by tests/test_entry.py.
+$(BUILDDIR)/entry_sim: tests/entry_sim.c src/entry.c src/entry.h $(RING_MAP) | $(BUILDDIR)
+	$(HOSTCC) $(HOSTCFLAGS) tests/entry_sim.c src/entry.c -o $@
 
 DOME_HOST = src/dome.c src/dome.h src/cracks.c src/cracks.h src/rules.c src/rules.h src/ship.c src/ship.h src/missiles.c src/missiles.h $(CELLS_H) $(BROKEN_MAP)
 $(BUILDDIR)/test_go_dome: tests/test_go_dome.c $(DOME_HOST) | $(BUILDDIR)
 	$(HOSTCC) $(HOSTCFLAGS) tests/test_go_dome.c src/dome.c src/cracks.c src/rules.c src/ship.c src/missiles.c -o $@
 
-test: cart $(SLOTS_LUA) $(SLOTS_JSON) $(BUILDDIR)/test_ship $(BUILDDIR)/ship_sim $(BUILDDIR)/test_missiles $(BUILDDIR)/mis_sim \
+test: cart $(SLOTS_LUA) $(SLOTS_JSON) $(BUILDDIR)/test_ship $(BUILDDIR)/ship_sim $(BUILDDIR)/spider_sim $(BUILDDIR)/test_missiles $(BUILDDIR)/mis_sim \
 		$(BUILDDIR)/view_sim $(BUILDDIR)/rules_sim $(BUILDDIR)/test_rules $(BUILDDIR)/test_broken \
 		$(BUILDDIR)/broken_tiles_dump $(BUILDDIR)/test_hud $(BUILDDIR)/test_collapse $(BUILDDIR)/collapse_sim \
-		$(BUILDDIR)/test_go_dome $(BUILDDIR)/stars_sim $(BUILDDIR)/radar_sim $(BUILDDIR)/title_sim \
-		$(BUILDDIR)/best_sim
+		$(BUILDDIR)/test_go_dome $(BUILDDIR)/radar_sim $(BUILDDIR)/title_sim \
+		$(BUILDDIR)/board_sim $(BUILDDIR)/entry_sim $(BUILDDIR)/props_sim $(BUILDDIR)/sound_sim $(BUILDDIR)/test_props_commit \
+		$(BUILDDIR)/test_props_table
 	$(BUILDDIR)/test_ship
 	$(BUILDDIR)/test_missiles
 	$(BUILDDIR)/test_rules
@@ -547,9 +781,12 @@ test: cart $(SLOTS_LUA) $(SLOTS_JSON) $(BUILDDIR)/test_ship $(BUILDDIR)/ship_sim
 	$(BUILDDIR)/test_hud
 	$(BUILDDIR)/test_collapse
 	$(BUILDDIR)/test_go_dome
-	$(BUILDDIR)/stars_sim all > /dev/null
-	$(BUILDDIR)/best_sim < /dev/null > /dev/null	# Task 8: the sim builds and runs
+	$(BUILDDIR)/test_props_commit
+	$(BUILDDIR)/test_props_table
+	$(BUILDDIR)/board_sim < /dev/null > /dev/null	# B1/B2: the sim builds and runs
+	$(BUILDDIR)/entry_sim < /dev/null > /dev/null	# B5: the sim builds and runs
 	python3 -m pytest tests -q
+	python3 tests/check_spider.py --host
 
 # headless MAME: boots into cart code; the snapshot shows the dome with the
 # ship on the start cell, and with the stick held up the ship reaches the peak;
@@ -590,66 +827,13 @@ test: cart $(SLOTS_LUA) $(SLOTS_JSON) $(BUILDDIR)/test_ship $(BUILDDIR)/ship_sim
 # Task 2). `flow-mvs-norestart` (M6 Task 4) plays the Up-held game on MVS,
 # taps A at GAME OVER + 60, and proves A does not restart the game and the
 # 295-frame return to the title still happens.
-boot-test: cart crktest-cart crackframemark-cart framemark-cart godraw-cart radartest-cart soundtest-cart soundradar-cart $(SLOTS_LUA) $(SLOTS_JSON)
-	scripts/boot_test.sh dome
-	scripts/boot_test.sh dome-lift
-	scripts/boot_test.sh ship
-	BOOT_HOLD="P1 Up" scripts/boot_test.sh ship-top
-	FRAMES=1000 scripts/boot_test.sh missile
-	FRAMES=1500 scripts/boot_test.sh leftovers
-	CRACK_CART="$(CRKTEST_CART)" scripts/boot_test.sh cracks
-	CRACK_CART="$(CRKTEST_CART)" CRACK_ANGLE=56 scripts/boot_test.sh cracks
-	scripts/boot_test.sh hud
-	scripts/boot_test.sh collapse
-	scripts/boot_test.sh framemark
-	scripts/boot_test.sh crackframemark
-	scripts/boot_test.sh ship-respawn
-	scripts/boot_test.sh ship-respawn-nodeath
-	GO_DRAW_CART="$(GET_CART)" scripts/boot_test.sh gameover-draw
-	scripts/boot_test.sh stars
-	RADAR_CART="$(RADTEST_CART)" scripts/boot_test.sh radar
-	scripts/boot_test.sh flow
-	scripts/boot_test.sh flow-restart
-	scripts/boot_test.sh flow-pages
-	scripts/boot_test.sh flow-pages-c
-	scripts/boot_test.sh flow-level
-	scripts/boot_test.sh flow-return
-	scripts/boot_test.sh flow-return-best
-	scripts/boot_test.sh flow-mvs
-	scripts/boot_test.sh flow-mvs-start
-	scripts/boot_test.sh flow-mvs-norestart
-	# M6 Task 9: the backup-RAM high scores on MVS — three runs sharing
-	# one fresh nvram directory: run 1 plays the centred game to GAME
-	# OVER, run 2 proves the persisted score shows on the title before
-	# any game, run 3 (a fresh nvram) proves a clean "0".
-	rm -rf build/best-nvram
-	BEST_NVRAM_DIR="$(abspath build/best-nvram)" scripts/boot_test.sh best-mvs
-	BEST_NVRAM_DIR="$(abspath build/best-nvram)" BEST_REUSE=1 scripts/boot_test.sh best-mvs
-	BEST_NVRAM_DIR="$(abspath build/best-nvram)" BEST_FRESH=1 scripts/boot_test.sh best-mvs
-	# M6 Task 10: the AES memory-card high scores — three runs. Runs 1
-	# and 2 share one -memcard file (run 1 starts from a fresh one, run 2
-	# reuses it with a FRESH nvram/cfg, proving the card — not the
-	# per-boot backup RAM — kept the score); run 3 passes no card at all,
-	# proving the 0x80 no-card path and that a game still keeps its score
-	# in backup RAM for the boot.
-	rm -rf build/best-card
-	BEST_CARD_DIR="$(abspath build/best-card)" scripts/boot_test.sh best-aes
-	BEST_CARD_DIR="$(abspath build/best-card)" BEST_REUSE=1 scripts/boot_test.sh best-aes
-	BEST_CARD_DIR="$(abspath build/best-card)" BEST_NOCARD=1 scripts/boot_test.sh best-aes
-	# M7 Task 1: the sound pipeline — the soundtest cart (AES) plays all
-	# five effects at the recorded title frames and the check reads the
-	# recorded WAV; the MVS leg proves the same driver + samples play
-	# under the MVS BIOS.
-	scripts/boot_test.sh sound
-	scripts/boot_test.sh sound-mvs
-	# M7 Task 2: the game's sounds — the sound-game leg drives the
-	# deterministic "sound game" and proves the logged sends equal the
-	# model's predicted commands (frame for frame), sampled sends are loud
-	# in the WAV, and the collapse's 5 rumbles come 9 frames apart; the
-	# sound-radar leg (no input) proves the lock-on pips come every 20
-	# frames from the lock's first frame, none before.
-	scripts/boot_test.sh sound-game
-	scripts/boot_test.sh sound-radar
+boot-test: cart crktest-cart crackframemark-cart framemark-cart static-cart staticfm-cart godraw-cart radartest-cart soundtest-cart soundradar-cart $(SLOTS_LUA) $(SLOTS_JSON)
+	# every leg (headless MAME + its checker) runs from scripts/boot_test_all.sh,
+	# the leg list's one home: in parallel (BOOT_JOBS at a time, default half
+	# the cores), each leg in its own build/boot-legs/ directory, the outputs
+	# printed in order. BOOT_JOBS=1 runs them one at a time.
+	CRKTEST_CART="$(CRKTEST_CART)" GET_CART="$(GET_CART)" RADTEST_CART="$(RADTEST_CART)" \
+	    scripts/boot_test_all.sh
 
 mame: cart
 	scripts/mame.sh

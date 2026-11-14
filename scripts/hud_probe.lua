@@ -61,6 +61,13 @@ local rules_addr = tonumber(os.getenv("HUD_RULES_ADDR") or "0")
 
 local BI, CHG = 0x10fd96, 0x10fd97
 local FR = 0x7000
+-- the fix palette RAM (dome-scenery Task 9): bank 7 (PAL_HUD, the title's
+-- blue) and bank 11 (PAL_HUD_PLAY, the in-play amber). Palette RAM's base is
+-- 0x400000; bank b's 16 words sit at 0x400000 + b*32..+30. Entry 0 is
+-- transparent (0x8000), entries 1..15 the colours.
+local PAL_BASE = 0x400000
+local PAL_HUD = 7
+local PAL_HUD_PLAY = 11
 local joy = machine.ioport.ports[":ctrl1:joy:JOY"]
 -- the cart now boots to a title: this helper presses Start to begin a game
 -- (M6 Task 1), and exposes game_started(fc) to keep our drive() off the title
@@ -169,6 +176,85 @@ local function sample(fc)
     end
 end
 
+-- Task 9: the palette nibble of every non-space FIXMAP cell on the
+-- in-play rows (26, 28 and, when shown, 7), plus the two palette banks
+-- themselves. `P <fc> <row> <c>:<nibble>,...` lists only the non-space
+-- cells of that row (a space draws nothing, so any bank would do); the
+-- checker compares each nibble with PAL_HUD_PLAY 11. `B <fc> <bank>
+-- <word>,...` carries the 16 words of each bank (entry 0 first), so the
+-- checker proves bank 11 == fix_pal_amber and bank 7 == fix_pal.
+local function palette_sample(fc)
+    local rows = { 7, 8, 26, 28 }
+    local i, r, c
+
+    for i = 1, #rows do
+        r = rows[i]
+        -- rows 7/8 (GAME OVER and its Task G1 cap row) are only checked
+        -- when the cart shows them; a cleared row has no non-space cells,
+        -- so no P line is written for it then. Rows 26/28 always have cells
+        -- (the integrity and the lives).
+        local cells = {}
+        for c = 0, 39 do
+            local entry = vread(FR + c * 32 + r)
+            local tile = entry & 0x0fff
+            if tile ~= 0x20 then
+                cells[#cells + 1] = string.format("%d:%d", c, (entry >> 12) & 0x0f)
+            end
+        end
+        if #cells > 0 then
+            f:write(string.format("P %d %d %s\n", fc, r, table.concat(cells, ",")))
+        end
+    end
+    for i = 1, 2 do
+        local bank = (i == 1) and PAL_HUD or PAL_HUD_PLAY
+        local words = {}
+        for c = 0, 15 do
+            words[#words + 1] = string.format("%04x",
+                sp:read_u16(PAL_BASE + bank * 32 + c * 2))
+        end
+        f:write(string.format("B %d %d %s\n", fc, bank, table.concat(words, ",")))
+    end
+end
+
+-- Task 9 proof 3: the title's fix cells — on a title frame every
+-- non-space FIXMAP cell (rows 0..29) must carry the PAL_HUD 7 nibble. The
+-- title is recognised by fc == 0 AND the drawn row 3 ("E-SRG"'s logo row,
+-- which only the cart's title code writes, exactly as tests/check_flow.py
+-- gates it). The probe samples the title every 6 MAME frames; the checker
+-- counts every non-space cell it saw and fails on any other nibble.
+local title_next = 0
+local TITLE_ROW3 = string.rep(" ", 12)
+for c = 0, 15 do TITLE_ROW3 = TITLE_ROW3 .. string.format("<%d>", 146 + c) end
+TITLE_ROW3 = TITLE_ROW3 .. string.rep(" ", 12)
+
+local function row_text(r)
+    local line = ""
+    local c
+    for c = 0, 39 do
+        local tile = vread(FR + c * 32 + r) & 0x0fff
+        line = line .. row_tile(tile)
+    end
+    return line
+end
+
+local function title_palette_sample(fc)
+    f:write(string.format("TP %d\n", fc))
+    for r = 0, 29 do
+        local cells = {}
+        for c = 0, 39 do
+            local entry = vread(FR + c * 32 + r)
+            local tile = entry & 0x0fff
+            if tile ~= 0x20 then
+                cells[#cells + 1] = string.format("%d:%d", c, (entry >> 12) & 0x0f)
+            end
+        end
+        if #cells > 0 then
+            f:write(string.format("TR %d %d %s\n", fc, r,
+                                  table.concat(cells, ",")))
+        end
+    end
+end
+
 -- the actual loop: this probe is driven from the frame notifier. The AES
 -- BIOS preamble runs at low addresses (0x00c0xxxx); the cart's code lives at
 -- 0x100000+, so "in cart space" means PC >= 0x100000.
@@ -187,6 +273,18 @@ local function tick()
         -- sample on cart frames 60,80,...: compare each against the model
         if fc >= 60 and (fc - 60) % 20 == 0 then
             sample(fc)
+        end
+        -- Task 9 proofs 2 and 4: on the SAME sampled play frames, the
+        -- in-play rows' palette nibbles and the two fix palette banks.
+        -- (Rows 26/28 always have cells; row 7 only while GAME OVER.)
+        if fc >= 60 and (fc - 60) % 20 == 0 then
+            palette_sample(fc)
+        end
+        -- Task 9 proof 3: the title's cells (fc == 0 and row 3 == the
+        -- logo row), every 6 MAME frames, before any Start.
+        if fc == 0 and n >= title_next and row_text(3) == TITLE_ROW3 then
+            title_palette_sample(fc)
+            title_next = n + 6
         end
         if not snapped and fc >= 100 then
             machine.video:snapshot()

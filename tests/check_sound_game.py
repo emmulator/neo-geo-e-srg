@@ -19,12 +19,13 @@ with NO input) and records every game sound command in the game log
       is in the log in order, and every logged send was predicted (no
       extra);
    3. every logged send was acknowledged (ok == 1);
-   4. the 3 dome deaths' collapse rumbles: 5 SND_HIT sends per death,
-      9 frames apart, from the death's frame;
-   5. 5 sampled sends of each kind (fire / jump / hit / crack / pip) are
-      loud (peak > the per-effect threshold) right after their WAV time
-      and silent (peak < 200) in the 0.1 s before (the same sampling as
-      the M7 Task 1 check);
+   4. the 3 dome deaths' collapse beats: 5 sends per death, 9 frames
+      apart from the death's frame, alternating HIT, CRACK, HIT, CRACK,
+      HIT (frame 0 is the death's HIT; 9/27 CRACK, 18/36 HIT);
+   5. 5 sampled sends of each kind the game sends (fire / jump / hit /
+      crack / pip / move) are loud (peak > the per-effect threshold) right
+      after their WAV time and silent (peak < 200) in the 0.1 s before
+      (the same sampling as the M7 Task 1 check);
    6. the model's GAME OVER frame is reached by the recorded game.
 
   radar leg:
@@ -49,15 +50,15 @@ import mis_seed  # noqa: E402  (Task 1: the cart's seed)
 import rules_model as rmm  # noqa: E402
 import ship_model as sm  # noqa: E402
 import radar_model as rdm  # noqa: E402
+import sound_model  # noqa: E402  (R1: the scuttle/rumble/pip model)
 from test_rules_play import frame_model  # noqa: E402
 
 FRAME_HZ = 59.1856
 WAV_FRAME = 48000
 SILENT_PEAK = 200
-LOUD_MIN = {4: 4000, 5: 1000, 6: 6000, 7: 6000, 8: 2000}
-CMD_NAME = {4: "fire", 5: "jump", 6: "hit", 7: "crack", 8: "pip"}
+LOUD_MIN = {4: 4000, 5: 1000, 6: 6000, 7: 6000, 8: 2000, 9: 900}
+CMD_NAME = {4: "fire", 5: "jump", 6: "hit", 7: "crack", 8: "pip", 9: "move"}
 
-DEAD_FRAMES = rmm.DEAD_FRAMES_NEO
 
 
 def read_wav_mono(path):
@@ -105,8 +106,8 @@ def model_prediction(records, radar_mode=False, seed=None):
     ship, mis, rules = sm.Ship(), mm.Missiles(seed=seed), rmm.Rules(1)
     radar = rdm.Radar()
     state = (ship, mis, rules, radar)
+    sound = sound_model.Sound()     # R1: the scuttle's spin period + the pip
     pred = {}
-    pip_t = 0
     go = None
     deaths = []
     first_lock = None
@@ -215,24 +216,12 @@ def model_prediction(records, radar_mode=False, seed=None):
         died = rules.end(ship, mis)
         mis.integ = rules.integ
         radar.frame(ship, mis)          # the frame's radar, after the logic
-        f_ = DEAD_FRAMES - rules.dead_t if rules.dead_t and rules.dome_dead else 0
         # a dome death starts on the frame rules_end set dead_t (this
-        # frame): the collapse's frame-0 rumble is the death itself
+        # frame): the collapse's frame-0 beat is the death itself
         new_dome_death = (not was_dead and rules.dead_t and rules.dome_dead)
-        rumble_on = bool(rules.dead_t and rules.dome_dead
-                         and f_ in (9, 18, 27, 36))
-        first_pip = False
-        if radar.locked:
-            if first_lock is None:
-                first_lock = fc
-            first_pip = (pip_t == 0)
-            pip_t += 1
-            if pip_t == 20:
-                pip_t = 0
-        else:
-            pip_t = 0
-        cmds = predict_cmds(mis.sfx, ship.jumped, rumble_on,
-                            radar.locked, first_pip, died)
+        if radar.locked and first_lock is None:
+            first_lock = fc
+        cmds = sound.cmds(ship, mis, rules, radar, died)
         if new_dome_death:
             deaths.append(fc)
         if cmds:
@@ -242,17 +231,16 @@ def model_prediction(records, radar_mode=False, seed=None):
             break
     return pred, go, deaths, first_lock
 def predict_cmds(sfx, jumped, rumble_on, locked, first_pip, died=False):
-    """flow.c game_sound's command decision for one frame, as a pure
-    function: the order is the C's (jump, fire, crack-else-hit, rumble,
-    pip). The same-frame rule is `crack` BEFORE `hit`: a frame whose sfx
-    has BOTH SFX_HIT and SFX_CRACK sends the crack only. Exposed so the
-    same-frame rule can be checked directly (mutation (a) flips the order
-    and this function's output flips too — the boot-test game never has a
-    same-frame hit+crack, so the rule needs a direct check). died: the
+    """the same-frame hit/crack rule, as a pure helper for the direct check
+    below (the frame's whole decision is tests/sound_model.py's
+    Sound.cmds). The rule is `crack` BEFORE `hit`: a frame whose sfx has
+    BOTH SFX_HIT and SFX_CRACK sends the crack only. Mutation (a) (hit
+    wins) flips this function's output; the boot-test game never has a
+    same-frame hit+crack, so the rule needs this direct check. died: the
     ship died this frame (either kind): the Vectrex's kill_ship explosion
     sets snd_hit after break_tile, so the death's hit sends INSTEAD of the
     frame's crack or hit — and on a dome death it is the collapse's
-    frame-0 rumble too (one send, not two)."""
+    frame-0 beat too (one send, not two)."""
     cmds = []
     if jumped:
         cmds.append(5)
@@ -333,35 +321,42 @@ def main():
         if first_lock is None:
             failures.append("model never locked the radar")
 
-    # ---- 4. the collapse rumbles (game mode): 5 per death, 9 apart ----
+    # ---- 4. the collapse's 5 beats (game mode): 9 frames apart, and the
+    # two explosions alternate HIT, CRACK, HIT, CRACK, HIT ----
     if not radar_mode:
-        # the deaths are the model's; the rumbles are the SND_HIT sends at
-        # the death frame and +9,+18,+27,+36
+        # the deaths are the model's; the beats are at the death frame and
+        # +9,+18,+27,+36, with the death's HIT then CRACK/HIT/CRACK/HIT
         for d in deaths:
-            rums = [fc for fc in all_fcs if d <= fc <= d + 36
-                    and fc in pred and 6 in pred[fc]]
-            want = [d, d + 9, d + 18, d + 27, d + 36]
-            if [fc for fc in want if fc in pred] != want:
-                failures.append(f"death {d}: rumbles at "
-                                f"{[fc for fc in want if fc in pred]}, want "
-                                f"{want}")
+            want_fc = [d, d + 9, d + 18, d + 27, d + 36]
+            want_cmd = [6, 7, 6, 7, 6]
+            got = [pred.get(fc, []) for fc in want_fc]
+            if [fc for fc in want_fc if fc in pred] != want_fc:
+                failures.append(f"death {d}: beats at "
+                                f"{[fc for fc in want_fc if fc in pred]}, "
+                                f"want {want_fc}")
+            for fc, cmd, got_cmds in zip(want_fc, want_cmd, got):
+                if cmd not in got_cmds:
+                    failures.append(f"death {d}: collapse beat at fc {fc} is "
+                                    f"{got_cmds}, want {cmd} in it")
         # also: exactly 5 per death (already implied by the frame match)
 
     x = read_wav_mono(wav) if sends else None
     # ---- 5. sampled sends loud / silent (game mode); pips (radar) ----
     # sample 5 isolated sends of every kind the centred game actually
-    # sends (the plan's centred game never jumps — the ship rests on the
-    # start cell — so jump is not among them; the kinds present are fire,
-    # hit (the 1 missile kill + the collapse rumbles), crack and pip). The
-    # plan's proof asks that each sampled send is LOUD right after (the
-    # dense game's samples overlap each other, so a "silent before" window
-    # is not required — the frame-for-frame match already proves the
-    # send happened at that fc). The radar leg's pips ARE sparse (every 20
-    # frames, 0.34 s apart) so its silent-before check still holds.
+    # sends (the plan's centred game never jumps or walks — the ship rests
+    # on the start cell — so jump/move are not among them; the kinds
+    # present are fire, hit (the 1 missile kill + the collapse's HIT
+    # beats), crack (the collapse's CRACK beats) and pip). The plan's proof
+    # asks that each sampled send is LOUD right after (the dense game's
+    # samples overlap each other, so a "silent before" window is not
+    # required — the frame-for-frame match already proves the send happened
+    # at that fc). The radar leg's pips ARE sparse (every 20 frames,
+    # 0.34 s apart) so its silent-before check still holds. Move/jump are
+    # proved loud by the demo leg (tests/check_sound.py's demo mode).
     if radar_mode:
         kinds = [8]
     else:
-        kinds = [k for k in (4, 5, 6, 7, 8)
+        kinds = [k for k in (4, 5, 6, 7, 8, 9)
                  if any(k in c for c in pred.values())]
     for kind in kinds:
         samples = choose_samples(pred, kind)
@@ -432,8 +427,10 @@ def main():
           f"commands frame for frame")
     if not radar_mode:
         print(f"  totals: fire {tot[4]}, jump {tot[5]}, hit {tot[6]}, "
-              f"crack {tot[7]}, pip {tot[8]} (model GAME OVER at fc {go})")
-        print(f"  collapse rumbles: 3 dome deaths x 5 x 9 frames apart")
+              f"crack {tot[7]}, pip {tot[8]}, move {tot[9]} "
+              f"(model GAME OVER at fc {go})")
+        print(f"  collapse beats: 3 dome deaths x 5 beats 9 frames apart, "
+              f"HIT, CRACK, HIT, CRACK, HIT")
     else:
         print(f"  pips: {tot[8]} every 20 frames from the lock's first "
               f"frame (fc {first_lock})")

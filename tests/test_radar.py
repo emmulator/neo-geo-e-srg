@@ -57,13 +57,12 @@ def c_positions():
 def test_radar_h_constants_equal_the_model():
     d = _h_defs()
     assert d["RADAR_CX"] == "38"
-    # RADAR_CY is an expression in the dome's header (DOME_Y + 112): the
-    # model reads the same value through tests/layout.py, and the header's
-    # form must not drift. The value follows the dome's header (184 today,
-    # DOME_Y 72; 200 at DOME_Y 88), so the check passes under the plan's
-    # mutation rule (the radar keeps its place beside the dome's rim).
-    assert d["RADAR_CY"] == "(DOME_Y + 112)"
-    assert rm.CY == layout.d.RADAR_CY         # both follow src/dome.h
+    # RADAR_CY is a plain number: Dome-scenery Task 2 made it the literal
+    # 184, and Task 8 moved it 22 px down to 206 (onto the console's left
+    # wing, its disc's bottom on y 215 with the lives and the score). The
+    # model reads the same value through tests/layout.py.
+    assert d["RADAR_CY"] == "206"
+    assert rm.CY == layout.d.RADAR_CY         # both follow src/radar.h
     assert d["RADAR_RX"] == "30"
     assert d["RADAR_RY"] == "84"            # 8.4 px in tenths
     assert d["RADAR_H"] == "30"
@@ -137,7 +136,7 @@ def test_peak_ring_blips_sit_at_the_centre():
     # ring 0's polar angle is 0: the spot is always the ellipse's centre,
     # the stick is the full height at the radar's edge (R = 6.0), and the
     # heading runs straight down from the stick's top a quarter of the way
-    # to the centre: (CY - H) + H/4 = 161.5 -> 162 px at CY 184 (both the
+    # to the centre: (CY - H) + H/4 = 183.5 -> 184 px at CY 206 (both the
     # C's half-up and the model's half-even round it up). The expected end
     # y derives from the model's CY and H, so it follows the header.
     hy = rm.CY - (3 * rm.H) // 4

@@ -247,8 +247,8 @@ u8 collapse_shake(const rules_t *r)
         return 0;
     f = collapse_frac(r);
     if (f >= COLLAPSE_SHAKE)
-        return 31;
-    return (u8)(f < 8 ? 3 : f < 16 ? 7 : f < 26 ? 15 : 31);
+        return 21;                       /* 31 x 2/3 (Dome-scenery Task 2) */
+    return (u8)(f < 8 ? 2 : f < 16 ? 5 : f < 26 ? 10 : 21);
 }
 
 u8 collapse_burst(const rules_t *r)
@@ -257,7 +257,7 @@ u8 collapse_burst(const rules_t *r)
 
     if (f < COLLAPSE_SHAKE || f >= COLLAPSE_GONE)
         return 0;                        /* (and 0 while the gate is off) */
-    return (u8)((f - COLLAPSE_SHAKE) * 3);
+    return (u8)((f - COLLAPSE_SHAKE) * 2);   /* 3 x 2/3 */
 }
 
 u8 collapse_fall(const rules_t *r)
@@ -266,14 +266,15 @@ u8 collapse_fall(const rules_t *r)
 
     if (f < COLLAPSE_SHAKE || f >= COLLAPSE_GONE)
         return 0;
-    /* e-srg.c: for each g, if (fall + (g >> 3) <= 120) fall += g >> 3.
+    /* e-srg.c: for each g, if (fall + (g >> 3) <= 120) fall += g >> 3,
+     * the cap scaled by 2/3 (Dome-scenery Task 2): 120 -> 80.
      * One pass over the fall's g = 0..58 is 8 iterations of a 3-op loop —
      * the 68000's DIVU is 140 cycles, so the closed form
      * ((g>>3)*((g>>3)*4-4) + ((g&7)+1)*(g>>3)) is not worth it; the loop
      * runs during the collapse only, and the countdown is 118 frames. */
     g = (u8)(f - COLLAPSE_SHAKE);
-    for (q = 0; q <= g && fall < 120; q++)
-        if (fall + (q >> 3) <= 120)
+    for (q = 0; q <= g && fall < 80; q++)
+        if (fall + (q >> 3) <= 80)
             fall = (u8)(fall + (q >> 3));
     return fall;
 }

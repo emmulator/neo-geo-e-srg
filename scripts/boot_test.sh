@@ -11,32 +11,42 @@
 # flow; flow-mvs / flow-mvs-start: the MVS boot harness — a coin, the BIOS
 # compulsion timer, and the game starting when it runs out or on a real Start
 # press; flow-mvs-norestart: on MVS, A at GAME OVER does nothing and the
-# 295-frame return to the title still happens; flow-pages: the title's nine
+# 295-frame return to the title still happens; flow-pages: the title's eleven
 # pages turn every 295 frames with no Start, the dome on page 0 only, and
 # every sampled frame's rows equal the title model; flow-pages-c: a C press
 # turns the page (M6 Tasks 1, 2, 4, 6); flow-level: B taps cycle the level
 # NORMAL->HARD->EASY->NORMAL->HARD on page 0 with title_t 0 and the game
 # begins at the chosen level; flow-return: the GAME OVER return opens the
-# HIGH SCORES page (1) with the level kept, and a fresh boot shows page 0
-# and NORMAL (M6 Task 7); best-mvs: the MVS backup-RAM high scores (M6
-# Task 9); best-aes: the AES memory-card high scores (M6 Task 10) — three
-# runs of `aes -cart esrg`, runs 1 and 2 sharing one -memcard file (run
-# 2's fresh nvram proves the card, not the per-boot backup RAM, kept the
-# score), run 3 with no card at all.
-# sound / sound-mvs: the M7 Task 1 sound pipeline — the -DSOUND_TEST cart
-# sends the five effects at recorded title frames (plus the frame-400
-# two-in-one send) and the checker proves from the -wavwrite recording
-# that every send was acknowledged, each is silent before / loud after /
-# right length, and the frame-400 pair plays the hit's 0.64 s with the pip
-# over it (sound-mvs runs the same cart under `neogeo -bios euro`).
+# played level's board page (NORMAL -> page 2) with the level kept, and a
+# fresh boot shows page 0 and NORMAL (M6 Task 7); best-mvs: the MVS
+# backup-RAM board (high-score
+# boards Task B2) — four runs: 1 plays the aiming game, 2 proves the board
+# persisted, 3 reuses it with the saved magic patched to the old 'ESRG'
+# (the entry must reset to the defaults), 4 starts from a fresh nvram;
+# best-aes: the AES memory-card board (Task B2) — four runs, runs 1 and 2
+# sharing one -memcard file (run 2's fresh nvram proves the card kept the
+# board), run 3 the old 'ESRG' card magic, run 4 no card at all.
+# sound: the M7 Task 1 sound pipeline — the -DSOUND_TEST cart sends the
+# six effects at recorded title frames (plus the frame-400 two-in-one
+# send) and the checker proves from the -wavwrite recording that every
+# send was acknowledged, each is silent before / loud after / right length,
+# and the frame-400 pair plays the hit's 0.75 s with the pip over it.
+# sound-mvs: Attract A4/D1 — the NORMAL cart (the demo compiled in) under
+# `neogeo -bios euro`. The probe sets bios_game_dip[6] (the "DEMO SOUND"
+# soft DIP) and taps REG_SOUND: at its header default OFF the entry cycle
+# and a full 3245-frame cycle send none (and a 60-frame D hold on MVS does
+# nothing, no row-21 confirmation); with it ON a full cycle's commands
+# equal the model's; a real game started after it still sounds; and the
+# ROM header's soft-DIP table decodes to E-SRG / DEMO SOUND / ON / OFF with
+# OFF (selected 1) the default (the BIOS game-settings data).
 # sound-game / sound-radar: the M7 Task 2 tests — the same cart now plays
 # the deterministic "sound game" (sound_game_probe.lua drives it) and
 # records every game sound send in the game log; the checker replays the
 # model from the recorded inputs and proves the log equals its predicted
 # commands frame for frame, the sampled sends are loud in the WAV, the
-# dome deaths' 5 rumbles come 9 frames apart, and (sound-radar, no input)
-# the lock-on pips come every 20 frames from the lock's first frame, none
-# before.
+# collapse's 5 beats alternate HIT/CRACK 9 frames apart, and (sound-radar,
+# no input) the lock-on pips come every 20 frames from the lock's first
+# frame, none before.
 # Env: FRAMES (900), BOOT_HOLD (input held from frame 120), MAME_BIOS_DIR, MAME,
 # CRACK_CART (path to the crack-test cart), FRAME_MARK_CART (path to the
 # frame-mark cart), MVS_BIOS_ZIP (source of the MVS BIOS set; default
@@ -44,7 +54,8 @@
 # holds; MVS_COIN=-100 disables the coin for the Task 2 failure demos);
 # for best-aes: BEST_CARD_DIR (the memory-card file's directory, default
 # $REPO/build/best-card), BEST_REUSE=1 (run 2: reuse run 1's card),
-# BEST_NOCARD=1 (run 3: no -memcard).
+# BEST_OLD=1 (run 3: patch the saved magic to the old 'ESRG'),
+# BEST_NOCARD=1 (run 4: no -memcard).
 # Boot timing: the cart's header turns the BIOS logo off (rom_eye_catcher_mode
 # 2, the M8 fixes), so the AES title starts at MAME frame ~24 and the MVS one
 # at ~299. Comments elsewhere that say the AES preamble is ~470 frames (title
@@ -61,21 +72,33 @@ fi
 if [[ "$MODE" == crackframemark ]]; then
     CART="${CRACK_FRAME_MARK_CART:-$REPO/build/rom/esrg-crackfm.zip}"
 fi
+if [[ "$MODE" == tear ]]; then
+    # Task 18: the props spin on the FRAME_MARK cart, whose work_start_mark
+    # and work_commit_mark give the frame's start-to-commit-end. The cart is
+    # the normal cart plus those two BSS marks.
+    CART="${FRAME_MARK_CART:-$REPO/build/rom/esrg-framemark.zip}"
+fi
 if [[ "$MODE" == gameover-draw ]]; then
     CART="${GO_DRAW_CART:-$REPO/build/rom/esrg-godraw.zip}"
 fi
 if [[ "$MODE" == radar ]]; then
     CART="${RADAR_CART:-$REPO/build/rom/esrg-radartest.zip}"
 fi
-if [[ "$MODE" == sound || "$MODE" == sound-mvs ]]; then
+if [[ "$MODE" == sound ]]; then
     # the M7 Task 1 sound-pipeline test: the -DSOUND_TEST cart
     # (build/rom/esrg-soundtest.zip), which scripts five sound-command
     # sends on the title plus the two-in-one-frame pair, recording each
     # send in a RAM log. The probe needs the log's address (the static
     # sound_test_log / sound_test_n and the hook's title counter, found by
-    # nm in the test ELF); the MVS leg runs the SAME cart under
-    # `neogeo -bios euro -cart1 esrg`.
+    # nm in the test ELF).
     CART="${SOUND_CART:-$REPO/build/rom/esrg-soundtest.zip}"
+fi
+if [[ "$MODE" == sound-mvs ]]; then
+    # Attract A4: the demo-sound leg runs the NORMAL cart (the demo is
+    # compiled in) under the MVS BIOS (`neogeo -bios euro -cart1 esrg`).
+    # The probe taps REG_SOUND and sets bios_game_dip[6] itself, so it
+    # needs the demo's epoch/frame exports from the normal ELF.
+    CART="${FLOW_CART:-$REPO/build/rom/esrg.zip}"
 fi
 if [[ "$MODE" == sound-game || "$MODE" == sound-radar ]]; then
     # the M7 Task 2 sound tests: the -DSOUND_TEST cart plays the
@@ -93,42 +116,177 @@ fi
 if [[ "$MODE" == flow || "$MODE" == flow-restart ]]; then
     CART="${FLOW_CART:-$REPO/build/rom/esrg.zip}"
 fi
+# Attract Task A3: the pre-A3 title-scene and calibrated gameplay legs use
+# the static-title cart (demo compiled out) so their frames and seeds stay
+# where they were calibrated; the demo/flow/Start legs keep the demo cart.
+STATIC_MODES="dome dome-lift ship ship-top missile leftovers hud collapse ship-respawn ship-respawn-nodeath sky ground ripple mountains band console props"
+PROBE_ELF="$REPO/build/rom.elf"
+if [[ " $STATIC_MODES " == *" $MODE "* ]]; then
+    CART="${STATIC_CART:-$REPO/build/rom/esrg-static.zip}"
+    PROBE_ELF="$REPO/build/rom-static.elf"
+fi
+if [[ "$MODE" == tear ]]; then
+    CART="${STATIC_FM_CART:-$REPO/build/rom/esrg-staticfm.zip}"
+    PROBE_ELF="$REPO/build/rom-staticfm.elf"
+fi
+if [[ "$MODE" == entry-lives || "$MODE" == entry-ruin ]]; then
+    # high-score boards Task B6: the entry-screen leg. `entry-lives` plays the
+    # aiming game (Left held, A only when aligned) until the score qualifies,
+    # then Up held to a lives-out GAME OVER over the whole dome; `entry-ruin`
+    # scores the same way and then stops firing for the dome death that
+    # collapses to the ruin. Both then wait out the 118
+    # GAME OVER frames, drive the entry (held turns, erase, auto-jump, END),
+    # and sample the returned title's blink. The probe needs the entry
+    # machine, the flow state, the ship/mis/rules, the board, the card log,
+    # the title state and the aim tables, found by nm.
+    PROBE="entry_probe.lua"
+    ENTRY_CASE_VAL="${MODE#entry-}"
+    BOOT_FRAMES="${BOOT_FRAMES:-32000}"
+    FLOW_STATE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "flow" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "flow" { print "0x" $1 }')"
+    ENTRY_STATE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "entry_state" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "entry_state" { print "0x" $1 }')"
+    ENTRY_FC_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "entry_fc" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "entry_fc" { print "0x" $1 }')"
+    FLOW_SHIP_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
+    FLOW_MIS_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }')"
+    FLOW_RULES_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }')"
+    FLOW_BEST_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_board" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_board" { print "0x" $1 }')"
+    FLOW_LEVEL_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_level_valid" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_level_valid" { print "0x" $1 }')"
+    FLOW_CARDLOG_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "card_log" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "card_log" { print "0x" $1 }')"
+    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }')"
+    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }')"
+    FLOW_CELL_RING_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_ring" && !seen++ { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_ring" && !seen++ { print "0x" $1 }')"
+    FLOW_CELL_PHI_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_phi" && !seen++ { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_phi" && !seen++ { print "0x" $1 }')"
+    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+fi
+if [[ "$MODE" == sky ]]; then
+    # dome-scenery Task 4: the backdrop is the sky in play and black on the
+    # title. The probe snapshots the title (fc 0) and a game frame (fc 30+);
+    # tests/check_sky.py compares the top-left backdrop pixel of both.
+    PROBE="sky_probe.lua"
+    SKY_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+    # the title snapshot lands at MAME ~frame 300 (fc 0), Start at 600, the
+    # game frame at fc 30 around MAME 640: 900 frames is ample.
+    BOOT_FRAMES="${BOOT_FRAMES:-900}"
+fi
 if [[ "$MODE" == flow-pages || "$MODE" == flow-pages-c ]]; then
     # M6 Task 6: the title pages run (AES no-Start) and the C-turn run
     # (MVS). Both boot the plain NORMAL cart and need the title state's
     # BSS addresses (title_page / title_t / flow_entry), found by nm.
     CART="${FLOW_CART:-$REPO/build/rom/esrg.zip}"
 fi
+if [[ "$MODE" == demo || "$MODE" == demo-start ]]; then
+    # Attract Task A3: the demo's frame budget is measured too, so both runs
+    # use the FRAME_MARK cart (it carries the same code plus the work marks).
+    CART="${FRAME_MARK_CART:-$REPO/build/rom/esrg-framemark.zip}"
+fi
 if [[ "$MODE" == flow-level || "$MODE" == flow-return || "$MODE" == flow-return-best ]]; then
     # M6 Task 7: the level-select run (AES: B taps at 1000..1300, Start at
     # 1400, the game plays at the chosen level) and the no-B return run
     # (fresh boot page 0 / NORMAL, the Up-held game to GAME OVER, and the
-    # returned title on the HIGH SCORES page). flow-return-best (M6 Task 9)
-    # adds the backup-RAM high-score table reads (flow_best) so the checker
-    # can prove the returned title shows the game's score. All three boot
-    # the plain NORMAL cart and need the flow_level backup-RAM byte, the
-    # static rules and the static mis addresses, found by nm.
+    # returned title on the played level's board page). flow-return-best (Task B2)
+    # adds the backup-RAM board reads (flow_board) so the checker can prove
+    # the returned title shows the board's top entries. All three boot the
+    # plain NORMAL cart and need the flow_level backup-RAM byte, the static
+    # rules and the static mis addresses, found by nm.
     CART="${FLOW_CART:-$REPO/build/rom/esrg.zip}"
 fi
 if [[ "$MODE" == best-mvs ]]; then
-    # M6 Task 9: the MVS backup-RAM high-score proof (three runs sharing
-    # or not sharing one nvram, see below). Boots the plain NORMAL cart
-    # under `neogeo -bios euro -cart1 esrg` and needs flow_best (the
-    # backup-RAM table), flow_level's marker pair, the static mis (for
-    # score10) and the title state's addresses, found by nm.
+    # high-score boards Task B2: the MVS backup-RAM board proof (four runs
+    # sharing or not sharing one nvram, see below). Boots the plain NORMAL
+    # cart under `neogeo -bios euro -cart1 esrg` and needs flow_board (the
+    # backup-RAM board), flow_level's marker pair, the static mis (for
+    # score10), ship/the ROM cell tables (the aim policy) and the title
+    # state's addresses, found by nm.
     CART="${FLOW_CART:-$REPO/build/rom/esrg.zip}"
 fi
 if [[ "$MODE" == best-aes ]]; then
-    # M6 Task 10: the AES memory-card high-score proof (three runs, one
-    # -memcard file shared by runs 1 and 2, none for run 3 — see below).
-    # Boots the plain NORMAL cart under `aes -cart esrg` and needs the
-    # flow_best backup-RAM table, the flow_level marker pair, the static
-    # mis (for score10), the card-log words (card_log, the answers the
-    # cart's card calls left) and the title state's addresses, found by
-    # nm.
+    # high-score boards Task B2: the AES memory-card board proof (four
+    # runs, one -memcard file shared by runs 1..3, none for run 4 — see
+    # below). Boots the plain NORMAL cart under `aes -cart esrg` and needs
+    # the flow_board backup-RAM board, the flow_level marker pair, the
+    # static mis (for score10), ship/the ROM cell tables (the aim policy),
+    # the card-log words (card_log, the answers the cart's card calls left)
+    # and the title state's addresses, found by nm.
     CART="${FLOW_CART:-$REPO/build/rom/esrg.zip}"
 fi
-OUT="$REPO/build/boot"
+if [[ "$MODE" == entry-lives || "$MODE" == entry-ruin ]]; then
+    # high-score boards Task B6: the entry screen, on the plain NORMAL AES
+    # cart (the aim game / the centred collapse game to GAME OVER).
+    CART="${FLOW_CART:-$REPO/build/rom/esrg.zip}"
+fi
+# Plan P2 amendment 3: every Start is pressed on the cart's title_seed_t,
+# not on a fixed MAME frame, so the game's missile seed stays HEAD's seed.
+# Find title_seed_t's RAM address in the ELF of the cart this leg runs (the
+# probes' PROBE_ELF is not always the cart's ELF: radar, gameover-draw,
+# sound-game and sound-radar use their own test carts).
+cart_elf() {
+    case "$(basename "$CART")" in
+        esrg-static.zip)     echo "$REPO/build/rom-static.elf" ;;
+        esrg-staticfm.zip)   echo "$REPO/build/rom-staticfm.elf" ;;
+        esrg-framemark.zip)  echo "$REPO/build/rom-framemark.elf" ;;
+        esrg-crackfm.zip)    echo "$REPO/build/rom-crackframemark.elf" ;;
+        esrg-cracks.zip)     echo "$REPO/build/rom-cracktest.elf" ;;
+        esrg-godraw.zip)     echo "$REPO/build/rom-gameoverdraw.elf" ;;
+        esrg-radartest.zip)  echo "$REPO/build/rom-radartest.elf" ;;
+        esrg-soundtest.zip)  echo "$REPO/build/rom-soundtest.elf" ;;
+        esrg-soundradar.zip) echo "$REPO/build/rom-soundradar.elf" ;;
+        *)                   echo "$REPO/build/rom.elf" ;;
+    esac
+}
+TITLE_SEED_ELF="$(cart_elf)"
+TITLE_SEED_ADDR="$(m68k-neogeo-elf-nm "$TITLE_SEED_ELF" 2>/dev/null \
+    | awk '$2 ~ /^[BbDd]$/ && $3 == "title_seed_t" { print "0x" $1 }' \
+    || nm "$TITLE_SEED_ELF" 2>/dev/null \
+    | awk '$2 ~ /^[BbDd]$/ && $3 == "title_seed_t" { print "0x" $1 }')" \
+    || TITLE_SEED_ADDR=0
+TITLE_SEED_ADDR="${TITLE_SEED_ADDR:-0}"
+# BOOT_OUT: the leg's own output directory (scripts/boot_test_all.sh gives
+# every leg its own, so legs can run in parallel); build/boot by default.
+OUT="${BOOT_OUT:-$REPO/build/boot}"
 
 # Task 1: the MAME legs whose checkers replay the cart's game need the seed
 # the cart used (mis_seed_used) and, for the first-missile proofs, the static
@@ -137,8 +295,8 @@ OUT="$REPO/build/boot"
 mis_select() {
     local elf=""
     case "$1" in
-        hud|stars|collapse|ship-respawn|ship-respawn-nodeath|framemark|crackframemark)
-            elf="$REPO/build/rom.elf"
+        hud|collapse|ship-respawn|ship-respawn-nodeath|framemark|crackframemark)
+            elf="$PROBE_ELF"
             [[ "$1" == framemark ]] && elf="$REPO/build/rom-framemark.elf"
             [[ "$1" == crackframemark ]] && elf="$REPO/build/rom-crackframemark.elf" ;;
         gameover-draw) elf="$REPO/build/rom-gameoverdraw.elf" ;;
@@ -147,7 +305,7 @@ mis_select() {
         sound-radar)   elf="$REPO/build/rom-soundradar.elf" ;;
         flow|flow-restart|flow-pages|flow-pages-c|flow-level|flow-return|flow-return-best|\
         flow-mvs|flow-mvs-start|flow-mvs-norestart|best-mvs|best-aes)
-            elf="$REPO/build/rom.elf" ;;
+            elf="$PROBE_ELF" ;;
     esac
     [[ -n "$elf" ]] || return 0
     MIS_SEED_ADDR="$(m68k-neogeo-elf-nm "$elf" 2>/dev/null \
@@ -166,6 +324,25 @@ mis_select() {
 }
 mis_select "$MODE"
 
+# Task S3: the leftovers leg's bullet proof reads the static mis (the two
+# bullets' ring/phi/r), the ship (its dome angle), and hud_framecnt (the
+# churn's frame counter). Their .bss addresses come from the selected cart's
+# ELF, found by nm like the other legs' exports.
+if [[ "$MODE" == leftovers ]]; then
+    SHIP_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
+    MIS_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }')"
+    HUD_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+fi
+
 [[ -f "$CART" ]] || { echo "boot_test: $CART missing (run make)" >&2; exit 2; }
 
 FLATPAK_MAME=/var/lib/flatpak/app/org.mamedev.MAME/x86_64/stable/active/files/bin/mame
@@ -178,24 +355,28 @@ BIOS_DIR="${MAME_BIOS_DIR:-$HOME/Development/emulators/roms/mame-neogeo}"
 [[ -f "$BIOS_DIR/aes.zip" ]] || { echo "boot_test: $BIOS_DIR/aes.zip missing" >&2; exit 2; }
 
 PROBE="boot_probe.lua"
+if [[ "$MODE" == entry-lives || "$MODE" == entry-ruin ]]; then
+    PROBE="entry_probe.lua"
+fi
 if [[ "$MODE" == leftovers ]]; then PROBE="leftover_probe.lua"; fi
 if [[ "$MODE" == cracks ]]; then PROBE="broken_probe.lua"; fi
 if [[ "$MODE" == sound || "$MODE" == sound-mvs ]]; then PROBE="sound_probe.lua"; fi
 if [[ "$MODE" == sound-game || "$MODE" == sound-radar ]]; then PROBE="sound_game_probe.lua"; fi
 if [[ "$MODE" == collapse ]]; then PROBE="collapse_probe.lua"; fi
 if [[ "$MODE" == framemark || "$MODE" == crackframemark ]]; then PROBE="frame_mark_probe.lua"; fi
+if [[ "$MODE" == tear ]]; then PROBE="tear_probe.lua"; fi
 if [[ "$MODE" == ship-respawn || "$MODE" == ship-respawn-nodeath ]]; then
     PROBE="ship_respawn_probe.lua"
     # the probe reads the cart's BSS debug exports (the cart frame counter
     # and the rules' alive flag) so it can time the death and respawn
     # exactly; find their addresses in the freshly built ELF
-    SHIP_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    SHIP_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
-    SHIP_RC_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    SHIP_RC_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "rules_dbg_alive" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "rules_dbg_alive" { print "0x" $1 }')"
     # the model's first death under the hold-Up policy is at cart frame
     # 486, the respawn at 604 (see tests/check_ship_respawn.py). The
@@ -237,6 +418,14 @@ if [[ "$MODE" == cracks ]]; then
         | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }' \
         || nm "$REPO/build/rom-cracktest.elf" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }')"
+    # dome-scenery Task 12: the props follow the camera (ship.dome_angle,
+    # the ship struct's first byte), which the crack cart keeps at 0 even
+    # when CRACK_ANGLE forces a different overlay permutation. Its BSS
+    # address lets the probe dump the real angle for the checker's composite.
+    SHIP_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom-cracktest.elf" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
+        || nm "$REPO/build/rom-cracktest.elf" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
 fi
 if [[ "$MODE" == hud ]]; then
     PROBE="hud_probe.lua"
@@ -245,18 +434,18 @@ if [[ "$MODE" == hud ]]; then
     # the HUD redraws only on change and align its reads to cart frames, and
     # the static `rules` (for the after-death snapshot's lives byte);
     # find their addresses in the freshly built ELF
-    HUD_EVENTS_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    HUD_EVENTS_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_dbg_events" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_dbg_events" { print "0x" $1 }')"
-    HUD_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    HUD_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
-    HUD_RULES_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 == "b" && $3 == "rules" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 == "b" && $3 == "rules" { print "0x" $1 }')"
+    HUD_RULES_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }')"
     # the probe script needs to run past game over and the A restart. Task 1
     # seeds the missiles from the title's time: at the default 600 Start
     # (seed 0xaede) game 1's first death is at fc 3687 (the after-death
@@ -265,25 +454,6 @@ if [[ "$MODE" == hud ]]; then
     # with fire to score (the checker's "the score never grew" leg), so
     # ~20,400 MAME frames (game start ~603 + 17596 + the game-2 margin).
     BOOT_FRAMES="${BOOT_FRAMES:-20400}"
-fi
-if [[ "$MODE" == stars ]]; then
-    PROBE="stars_probe.lua"
-    # the stars turn with the ship's dome_angle: the probe reads it from the
-    # static `ship` in RAM (found by m68k-neogeo-elf-nm; the checker replays
-    # the ship model from the recorded inputs and proves the two agree).
-    # The stick-right policy walks the dome_angle ring continuously, so
-    # 1900 frames (cart fc up to ~1300 after the ~477-frame AES BIOS preamble
-    # and the Start window that now leaves the title at M6 Task 1) covers
-    # many turns and the 100 samples (fc 60..1050, sampled every 10).
-    STARS_ANGLE_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 == "b" && $3 == "ship" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 == "b" && $3 == "ship" { print "0x" $1 }')"
-    STARS_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
-    BOOT_FRAMES="${BOOT_FRAMES:-1900}"
 fi
 if [[ "$MODE" == radar ]]; then
     # the M5 Task 4 radar boot-test: the -DRADAR_TEST cart (radartest-cart)
@@ -299,32 +469,31 @@ if [[ "$MODE" == radar ]]; then
     PROBE="radar_probe.lua"
     RADAR_ELF="$REPO/build/rom-radartest.elf"
     RADAR_MIS_ADDR="$(m68k-neogeo-elf-nm "$RADAR_ELF" 2>/dev/null \
-        | awk '$2 == "b" && $3 == "mis" { print "0x" $1 }' \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }' \
         || nm "$RADAR_ELF" 2>/dev/null \
-        | awk '$2 == "b" && $3 == "mis" { print "0x" $1 }')"
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }')"
     RADAR_SHIP_ADDR="$(m68k-neogeo-elf-nm "$RADAR_ELF" 2>/dev/null \
-        | awk '$2 == "b" && $3 == "ship" { print "0x" $1 }' \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
         || nm "$RADAR_ELF" 2>/dev/null \
-        | awk '$2 == "b" && $3 == "ship" { print "0x" $1 }')"
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
     RADAR_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$RADAR_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
         || nm "$RADAR_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
     RADAR_RADAR_ADDR="$(m68k-neogeo-elf-nm "$RADAR_ELF" 2>/dev/null \
-        | awk '$2 == "b" && $3 == "radar" { print "0x" $1 }' \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "radar" { print "0x" $1 }' \
         || nm "$RADAR_ELF" 2>/dev/null \
-        | awk '$2 == "b" && $3 == "radar" { print "0x" $1 }')"
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "radar" { print "0x" $1 }')"
     BOOT_FRAMES="${BOOT_FRAMES:-2400}"
 fi
-if [[ "$MODE" == sound || "$MODE" == sound-mvs ]]; then
+if [[ "$MODE" == sound ]]; then
     # the M7 Task 1 sound test's RAM exports: the static sound_test_log
     # (u8[32]: tf_lo, tf_hi, cmd, result quadrupels) and sound_test_n (the
     # next free slot) and the hook's own u16 title counter sound_test_fc —
     # all from the -DSOUND_TEST ELF (build/rom-soundtest.elf), found by nm.
     # The run needs to reach title frame 400 (the last send: the
     # two-in-one frame), so ~1100 MAME frames: the ~477-frame AES BIOS
-    # preamble + 400 title frames + margin. The MVS leg runs the same cart
-    # under the MVS BIOS (`neogeo -bios euro -cart1 esrg`).
+    # preamble + 400 title frames + margin.
     SOUND_ELF="$REPO/build/rom-soundtest.elf"
     SOUND_LOG_ADDR="$(m68k-neogeo-elf-nm "$SOUND_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "sound_test_log" { print "0x" $1 }' \
@@ -338,14 +507,28 @@ if [[ "$MODE" == sound || "$MODE" == sound-mvs ]]; then
         | awk '$2 ~ /^[BbDd]$/ && $3 == "sound_test_fc" { print "0x" $1 }' \
         || nm "$SOUND_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "sound_test_fc" { print "0x" $1 }')"
-    # AES: ~1100 MAME frames (the ~477-frame preamble + title frame 400 +
-    # margin). MVS: the BIOS's own preamble and RAM clear run longer, and
-    # the cart's main() is entered ~270 frames later (~frame 749): 1200.
-    if [[ "$MODE" == sound-mvs ]]; then
-        BOOT_FRAMES="${BOOT_FRAMES:-1200}"
-    else
-        BOOT_FRAMES="${BOOT_FRAMES:-1100}"
-    fi
+    BOOT_FRAMES="${BOOT_FRAMES:-1100}"
+fi
+if [[ "$MODE" == sound-mvs ]]; then
+    # Attract A4/D1: the demo-sound leg. The normal cart's demo epoch/frame
+    # exports let the probe window the header default OFF (the entry's 3242
+    # frames and the full epoch-2 3245-frame cycle), the full epoch-3
+    # 3245-frame cycle with the DIP set ON, and the real game after it. The
+    # MVS BIOS clears RAM by ~frame 280 and the cart's title starts at
+    # ~302; the run also holds D for 60 frames during the default epoch:
+    # ~13,000 MAME frames (entry 3242 + two 3245-frame cycles = 9732, then
+    # the coin/Start and the real game's first 90 frames).
+    DEMO_ELF="$REPO/build/rom.elf"
+    DEMO_EPOCH_ADDR="$(m68k-neogeo-elf-nm "$DEMO_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "demo_dbg_epoch" { print "0x" $1 }' \
+        || nm "$DEMO_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "demo_dbg_epoch" { print "0x" $1 }')"
+    DEMO_FC_ADDR="$(m68k-neogeo-elf-nm "$DEMO_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "demo_dbg_fc" { print "0x" $1 }' \
+        || nm "$DEMO_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "demo_dbg_fc" { print "0x" $1 }')"
+    SOUND_DEMO_VAL=1
+    BOOT_FRAMES="${BOOT_FRAMES:-13000}"
 fi
 if [[ "$MODE" == sound-game ]]; then
     # the M7 Task 2 sound-game test: the same -DSOUND_TEST cart now plays
@@ -399,9 +582,9 @@ if [[ "$MODE" == sound-radar ]]; then
 fi
 if [[ "$MODE" == collapse || "$MODE" == framemark || "$MODE" == crackframemark ]]; then
     # the frame counter and the measurement exports come from the ELF
-    COLLAPSE_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    COLLAPSE_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
     # a full game to GAME OVER with the centred policy: first dome death
     # fc 8359, rebuild 8477, GAME OVER 27142 (the model's derivation under
@@ -438,6 +621,62 @@ if [[ "$MODE" == framemark || "$MODE" == crackframemark ]]; then
         || nm "$FM_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "work_start_mark" { print "0x" $1 }')"
 fi
+if [[ "$MODE" == tear ]]; then
+    # Task 18: the props leg's spin on the FRAME_MARK cart. Task 18b adds a
+    # second drive: the collapse leg's centred policy (stick centred, A every
+    # 11 cart frames, 3000 MAME frames: missiles land, the radar locks and
+    # blinks, explosions play). TEAR_DRIVE picks one; the probe reads the
+    # cart frame counter and the static `ship` (dome_angle), plus the frame's
+    # work-start and the last commit's end (both BSS marks).
+    PROBE="tear_probe.lua"
+    TEAR_DRIVE="${TEAR_DRIVE:-spin}"
+    if [[ "$TEAR_DRIVE" == fire ]]; then
+        BOOT_FRAMES="${BOOT_FRAMES:-3000}"
+    elif [[ "$TEAR_DRIVE" == title ]]; then
+        # Attract A2: 600 logged title frames (probe logs MAME 41..640)
+        BOOT_FRAMES="${BOOT_FRAMES:-640}"
+    else
+        BOOT_FRAMES="${BOOT_FRAMES:-1600}"
+    fi
+    TEAR_ELF="$PROBE_ELF"
+    PROPS_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+    PROPS_SHIP_ADDR="$(m68k-neogeo-elf-nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
+        || nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
+    START_ADDR="$(m68k-neogeo-elf-nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "work_start_mark" { print "0x" $1 }' \
+        || nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "work_start_mark" { print "0x" $1 }')"
+    COMMIT_ADDR="$(m68k-neogeo-elf-nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "work_commit_mark" { print "0x" $1 }' \
+        || nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "work_commit_mark" { print "0x" $1 }')"
+    # Task 18b's fire drive forces the first missile to the ship's start cell,
+    # as the RADAR_TEST cart's hook does: the normal cart's centred policy
+    # never targets cell 27 (outside the spawn rings), so without this the
+    # drive would play no lock/blink and no explosion within 3000 frames.
+    # The static `mis` and the missile tables' const arrays (all in ROM).
+    MIS_ADDR="$(m68k-neogeo-elf-nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }' \
+        || nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }')"
+    MIS_R_SPAWN_ADDR="$(m68k-neogeo-elf-nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$3 == "mis_r_spawn" && !n++ { print "0x" $1 }' \
+        || nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$3 == "mis_r_spawn" && !n++ { print "0x" $1 }')"
+    MIS_CELL_RING_ADDR="$(m68k-neogeo-elf-nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_ring" && !n++ { print "0x" $1 }' \
+        || nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_ring" && !n++ { print "0x" $1 }')"
+    MIS_CELL_PHI_ADDR="$(m68k-neogeo-elf-nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_phi" && !n++ { print "0x" $1 }' \
+        || nm "$TEAR_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_phi" && !n++ { print "0x" $1 }')"
+fi
 if [[ "$MODE" == gameover-draw ]]; then
     # the probe reads the test cart's go_test_dbg (the hook's per-frame
     # event byte) and the cart frame counter; both come from the ELF. The
@@ -470,9 +709,9 @@ if [[ "$MODE" == flow || "$MODE" == flow-restart ]]; then
     PROBE="flow_probe.lua"
     # the probe reads the cart's game-session frame counter; find it in the
     # freshly built ELF
-    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
     if [[ "$MODE" == flow ]]; then
         FLOW_RESTART_VAL=0
@@ -501,10 +740,10 @@ if [[ "$MODE" == flow-level || "$MODE" == flow-return || "$MODE" == flow-return-
     # fresh boot must show page 0/NORMAL; the Up-held game runs to the
     # model's GAME OVER (Task 1's seed at the default 600..604 Start:
     # fc 17525; 6509 with RNG_SEED) at NORMAL, the 295-frame window
-    # expires, and the returned title opens on page 1 (HIGH SCORES) —
-    # ~18,400 MAME frames (the game begins at ~MAME 603).
-    # flow-return-best (M6 Task 9) is the same return run with the best
-    # table's reads enabled.
+    # expires, and the returned title opens on page 2 (the played NORMAL
+    # level's board page) — ~18,400 MAME frames (the game begins at ~MAME
+    # 603). flow-return-best (high-score boards Task B2/B3) is the same
+    # return run with the board's reads enabled.
     PROBE="flow_probe.lua"
     FLOW_LEVEL_VAL=0
     FLOW_RETURN_VAL=0
@@ -525,41 +764,41 @@ if [[ "$MODE" == flow-level || "$MODE" == flow-return || "$MODE" == flow-return-
     # the task-7 RAM addresses (the backup-RAM pair's VALID marker — the
     # probe reads the marker at this address and the level at +1 —, the
     # static rules and the static mis) from the freshly built ELF
-    FLOW_LEVEL_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_LEVEL_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[Bb]$/ && $3 == "flow_level_valid" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[Bb]$/ && $3 == "flow_level_valid" { print "0x" $1 }')"
-    FLOW_RULES_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_RULES_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }')"
-    FLOW_MIS_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_MIS_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }')"
-    # M6 Task 9: the backup-RAM high-score table (flow_best) for the
+    # high-score boards Task B2: the backup-RAM board (flow_board) for the
     # flow-return-best leg (and the best-mvs mode, which sets its own)
-    FLOW_BEST_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_best" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_best" { print "0x" $1 }')"
+    FLOW_BEST_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_board" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_board" { print "0x" $1 }')"
     # the title state's addresses (page/t/entry) for the returned-title and
     # page-0 checks
-    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }')"
-    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }')"
-    FLOW_ENTRY_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_ENTRY_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "flow_entry" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "flow_entry" { print "0x" $1 }')"
-    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
 fi
 if [[ "$MODE" == flow-mvs || "$MODE" == flow-mvs-start || "$MODE" == flow-mvs-norestart ]]; then
@@ -581,23 +820,23 @@ if [[ "$MODE" == flow-mvs || "$MODE" == flow-mvs-start || "$MODE" == flow-mvs-no
     # ~19,200 MAME frames.
     PROBE="flow_probe.lua"
     FLOW_MVS_VAL=1
-    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
     # M6 Task 6: the MVS title rows' page-0 gate (the checker reads the
     # page the rows were drawn on from the T records)
-    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }')"
-    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }')"
-    FLOW_ENTRY_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_ENTRY_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "flow_entry" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "flow_entry" { print "0x" $1 }')"
     if [[ "$MODE" == flow-mvs ]]; then
         MVS_START_VAL=-100
@@ -610,9 +849,9 @@ if [[ "$MODE" == flow-mvs || "$MODE" == flow-mvs-start || "$MODE" == flow-mvs-no
     else
         MVS_START_VAL="${MVS_START:-1800}"
         FLOW_NORESTART_VAL=1
-        FLOW_RULES_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+        FLOW_RULES_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
             | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }' \
-            || nm "$REPO/build/rom.elf" 2>/dev/null \
+            || nm "$PROBE_ELF" 2>/dev/null \
             | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }')"
         # the start leg + the Up-held game to the model's GAME OVER (fc
         # 16551 under Task 1's seed 0xadf9; 6509 with RNG_SEED) + the
@@ -623,176 +862,390 @@ if [[ "$MODE" == flow-mvs || "$MODE" == flow-mvs-start || "$MODE" == flow-mvs-no
 fi
 
 if [[ "$MODE" == best-mvs ]]; then
-    # the M6 Task 9 MVS high-score proof: three runs of
-    # `neogeo -bios euro -cart1 esrg`. Run 1 (BEST_RUN=1) plays the
-    # scoring game (Right held + A every 11 frames) to GAME OVER (fc 20240
-    # under Task 1's seed 0xadf9; coin at 1500, Start at 1800 — the game
-    # begins at ~1802), reads mis.score10 at GAME OVER (> 0), waits for the
-    # high-scores return, and checks flow_best in RAM is valid and holds
-    # the score. Run 2 (BEST_RUN=2) reuses run 1's nvram and proves the
-    # FIRST page-0 frame's row 7 shows the persisted score before any game.
-    # Run 3 (BEST_RUN=3) uses a FRESH nvram and proves row 7 reads "0" (no
-    # garbage, no crash). boot_test.sh is called once per run with
-    # BEST_RUN and BEST_NVRAM_DIR set by the Makefile's best-mvs target
-    # (BEST_REUSE=1 for run 2, 0 otherwise).
+    # high-score boards Task B2: the MVS backup-RAM board proof. Four runs
+    # of `neogeo -bios euro -cart1 esrg`. Run 1 (best-mvs default) plays
+    # the aiming game (Left held, A only when a missile is aligned) to GAME
+    # OVER (coin at 1500, Start at 1800; the game begins at ~frame 1802),
+    # reads mis.score10 at GAME OVER (> 1000, i.e. above the default 5th
+    # entry), waits for the high-scores return, and checks flow_board in
+    # RAM is valid and holds the entry (three spaces) and the defaults.
+    # Run 2 (BEST_REUSE=1) reuses run 1's nvram and proves the board,
+    # including the game's entry, persisted before any game. Run 3
+    # (BEST_REUSE=1 BEST_OLD=1) reuses run 2's nvram after boot_test.sh
+    # overwrites the saved board's magic with the old 'ESRG' one; the entry
+    # must reject it and start from the defaults. Run 4 (BEST_FRESH=1)
+    # uses a FRESH nvram and proves the defaults (no garbage, no crash).
+    # boot_test.sh is called once per run with BEST_RUN / BEST_NVRAM_DIR
+    # set by the Makefile's target.
     PROBE="flow_probe.lua"
     FLOW_BEST_VAL=1
     FLOW_MVS_VAL=1
-    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }')"
-    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }')"
-    FLOW_ENTRY_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_ENTRY_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "flow_entry" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "flow_entry" { print "0x" $1 }')"
-    FLOW_LEVEL_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_LEVEL_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[Bb]$/ && $3 == "flow_level_valid" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[Bb]$/ && $3 == "flow_level_valid" { print "0x" $1 }')"
-    FLOW_MIS_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_MIS_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }')"
-    FLOW_BEST_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_best" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_best" { print "0x" $1 }')"
-    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_BEST_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_board" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_board" { print "0x" $1 }')"
+    FLOW_RULES_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }')"
+    FLOW_SHIP_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
+    FLOW_CELL_RING_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_ring" && !seen++ { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_ring" && !seen++ { print "0x" $1 }')"
+    FLOW_CELL_PHI_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_phi" && !seen++ { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_phi" && !seen++ { print "0x" $1 }')"
+    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
-    # the run kind: run 1 (default) plays the scoring game (the game
-    # begins at MAME ~1802 with the coin at 1500 and Start at 1800, and
-    # ends at the model's GAME OVER, fc 20240 under Task 1's seed 0xadf9;
-    # 24963 with RNG_SEED, so ~MAME 22042) plus the 295-frame window and
-    # the ~200-frame BIOS rebuild: ~22,600 MAME frames, with margin.
-    # Run 2 (BEST_REUSE=1)
-    # and run 3 (BEST_FRESH=1) only sit on the title: run 2 opens on page
-    # 1 (the persisted open-high-scores byte) and its first page-0 frame
-    # comes only after a full 9-page cycle (~8 x 295 title frames after
-    # the page-1 entry, ~MAME 3100) — the proof keys on that page-0 row 7,
-    # so the run needs ~3300 frames; run 3 (a fresh nvram) opens on page 0
-    # early, but shares the same budget.
+    FLOW_STATE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "flow" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "flow" { print "0x" $1 }')"
+    ENTRY_STATE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "entry_state" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "entry_state" { print "0x" $1 }')"
+    FLOW_BLINK_ACTIVE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "title_blink_active" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "title_blink_active" { print "0x" $1 }')"
+    FLOW_ENTRY_FINISH_VAL=1
+    # the run kind: run 1 (default) plays the aiming game (the game
+    # begins at MAME ~1802 with the coin at 1500 and Start at 1800; the
+    # measured GAME OVER is fc ~25978 under Task 1's seed 0xadf9) plus the
+    # 295-frame window and the ~200-frame BIOS rebuild: 30000 MAME frames,
+    # with margin. Runs 2 and 3 (reuse) and run 4 (fresh) only sit on the
+    # title: the first page-0 frame's row 9 is the proof; a reused run
+    # opens on page 2 (run 1 returned on NORMAL's board page) and its first
+    # page-0 frame comes after the 10 -> 0 turns (~9 x 295 title frames after
+    # the page-2 entry, ~MAME 2700), so 3300 frames cover all three.
     if [[ "${BEST_REUSE:-0}" == "1" || "${BEST_FRESH:-0}" == "1" ]]; then
         BOOT_FRAMES="${BOOT_FRAMES:-3300}"
         MVS_START_VAL="-100"
     else
-        BOOT_FRAMES="${BOOT_FRAMES:-23000}"
+        BOOT_FRAMES="${BOOT_FRAMES:-30000}"
         MVS_START_VAL="${MVS_START:-1800}"
     fi
 fi
 
 if [[ "$MODE" == best-aes ]]; then
-    # the M6 Task 10 AES memory-card proof: three runs of `aes -cart
-    # esrg`. Run 1 (BEST_REUSE=0, BEST_NOCARD=0) starts from a FRESH card
-    # file (rm -rf'd below) and a FRESH nvram/cfg: the first entry LOADs
-    # the (unformatted) card — answer 0x81 — then the scoring game runs
-    # to GAME OVER (fc 17818 under Task 1's seed 0xaede; 24963 with
-    # RNG_SEED) with score10 > 0, best_update changes the
-    # table, and the SAVE answers 0x81, FORMAT answers 0, SAVE answers 0
-    # (the card_log records, read from RAM). The returned title opens on
-    # page 1 (HIGH SCORES) whose NORMAL row shows the score. Run 2
+    # high-score boards Task B2: the AES memory-card board proof. Four runs
+    # of `aes -cart esrg`. Run 1 (default) starts from a FRESH card file
+    # (rm'd below) and a FRESH nvram/cfg: the first entry LOADs the
+    # (unformatted) card — answer 0x81 — then the aiming game runs to GAME
+    # OVER with score10 above the default 5th entry, board_insert changes
+    # the board, and the SAVE answers 0x81, FORMAT answers 0, SAVE answers
+    # 0 (the card_log records, read from RAM); the returned title opens on
+    # page 2 (NORMAL's board page) whose row 11 shows the board's top entry.
+    # Run 2
     # (BEST_REUSE=1) reuses run 1's card file with a FRESH nvram/cfg (a
-    # power-off: backup RAM empty): the entry LOADs the card (answer 0)
-    # and the FIRST page-0 frame's row 7 shows the same score before any
-    # game. Run 3 (BEST_NOCARD=1) passes no -memcard: the load answers
-    # 0x80, the first page-0 frame's row 7 reads "0", no crash, and a
-    # game to GAME OVER still keeps the score in backup RAM for the run.
+    # power-off: backup RAM empty): the entry LOADs the card (answer 0) and
+    # the board, including the game's entry, is back before any game. Run
+    # 3 (BEST_REUSE=1 BEST_OLD=1) reuses the card after boot_test.sh
+    # overwrites the saved board's magic with the old 'ESRG' one; the load
+    # answers 0 but board_valid rejects it, so the entry starts from the
+    # defaults. Run 4 (BEST_NOCARD=1) passes no -memcard: the load answers
+    # 0x80, the first page-0 frame shows the default board's NORMAL top,
+    # no crash, and a game to GAME OVER still keeps the board in backup RAM
+    # for the run.
     PROBE="flow_probe.lua"
     FLOW_BEST_VAL=1
     FLOW_BEST_AES_VAL=1
-    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }')"
-    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }')"
-    FLOW_ENTRY_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_ENTRY_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "flow_entry" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "flow_entry" { print "0x" $1 }')"
-    FLOW_LEVEL_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_LEVEL_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[Bb]$/ && $3 == "flow_level_valid" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[Bb]$/ && $3 == "flow_level_valid" { print "0x" $1 }')"
-    FLOW_MIS_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_MIS_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "mis" { print "0x" $1 }')"
-    FLOW_BEST_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_best" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
-        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_best" { print "0x" $1 }')"
-    FLOW_CARDLOG_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_BEST_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_board" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[Bb]$/ && $3 == "flow_board" { print "0x" $1 }')"
+    FLOW_RULES_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "rules" { print "0x" $1 }')"
+    FLOW_SHIP_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
+    FLOW_CELL_RING_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_ring" && !seen++ { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_ring" && !seen++ { print "0x" $1 }')"
+    FLOW_CELL_PHI_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_phi" && !seen++ { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_phi" && !seen++ { print "0x" $1 }')"
+    FLOW_CARDLOG_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "card_log" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "card_log" { print "0x" $1 }')"
-    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
-    # the run kind: run 2 (BEST_REUSE=1) only sits on the title (no Start)
-    # and needs just the first page-0 frame (~MAME 500): 1400 frames. Runs
-    # 1 and 3 play the scoring game (Right held + A every 11 frames) to the
-    # model's GAME OVER (fc 17818 under Task 1's seed 0xaede from the
-    # ~frame 603 Start, so ~MAME 18422; 24963 with RNG_SEED) plus the
-    # 295-frame window and the ~200-frame BIOS rebuild: ~19,000 MAME
+    FLOW_STATE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "flow" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "flow" { print "0x" $1 }')"
+    ENTRY_STATE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "entry_state" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "entry_state" { print "0x" $1 }')"
+    FLOW_BLINK_ACTIVE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "title_blink_active" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "title_blink_active" { print "0x" $1 }')"
+    FLOW_ENTRY_FINISH_VAL=1
+    # the run kind: runs 2 and 3 (BEST_REUSE=1) only sit on the title (no
+    # Start) and need just the first page-0 frame (~MAME 500): 1500 frames.
+    # Run 1 and run 4 (no card) play the aiming game (Left held, A only when
+    # a missile is aligned) to the measured GAME OVER (fc ~28348 under
+    # Task 1's seed 0xaede from the ~frame 603 Start, so ~MAME 28950) plus
+    # the 295-frame window and the ~200-frame BIOS rebuild: 31000 MAME
     # frames, with margin.
     if [[ "${BEST_REUSE:-0}" == "1" ]]; then
         BOOT_FRAMES="${BOOT_FRAMES:-1500}"
-        SG_ENABLE_VAL=0          # run 2 plays no game: the first page-0
+        SG_ENABLE_VAL=0          # runs 2/3 play no game: the first page-0
                                  # frame is the proof, before any Start
     else
-        BOOT_FRAMES="${BOOT_FRAMES:-19600}"
+        BOOT_FRAMES="${BOOT_FRAMES:-31000}"
     fi
 fi
 
+if [[ "$MODE" == sky ]]; then
+    # dome-scenery Task 4: the backdrop is the sky in play and black on the
+    # title. The probe snapshots the title (fc 0) and a game frame (fc 30+);
+    # tests/check_sky.py compares the top-left backdrop pixel of both.
+    PROBE="sky_probe.lua"
+    SKY_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+    # the title snapshot lands at MAME ~frame 300 (fc 0), Start at 600, the
+    # game frame at fc 30 around MAME 640: 900 frames is ample.
+    BOOT_FRAMES="${BOOT_FRAMES:-900}"
+fi
+if [[ "$MODE" == mountains ]]; then
+    # dome-scenery Task 6: the mountains. The probe presses Start, walks the
+    # ship up to the peak and spins the dome left through the panorama (and
+    # back right to 230), reading the driver's SCB3/SCB4 and all 21 chain
+    # columns' SCB1 words at dome angles 0, 1, 160, 161, 239 and 230, and
+    # snapshotting the title (fc 0) and a wrapping frame with a scroll phase
+    # (da 161). tests/check_mountains.py compares every read with the model
+    # and the WINDOW snapshot's band with the generated picture.
+    PROBE="mountains_probe.lua"
+    MTN_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+    MTN_SHIP_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
+    # the ~24-frame AES preamble, the game start at 603, the climb to the
+    # peak (~3 moves of 19 + a jump?) and a full left+right spin (50 steps/s:
+    # ~240 left frames + ~10 right) — 1600 MAME frames is ample.
+    BOOT_FRAMES="${BOOT_FRAMES:-1600}"
+fi
+if [[ "$MODE" == band ]]; then
+    # dome-scenery Task 17: the towns-and-forests band. The probe presses
+    # Start, walks the ship up to the peak and spins the dome left through
+    # the panorama (and back right to 230), reading the driver's SCB3/SCB4
+    # and all 21 chain columns' SCB1 words at dome angles 0, 1, 60, 140, 141,
+    # 232, 239 and 230, snapshotting the title (fc 0) and a wrapping frame
+    # with a scroll phase where a back prop reaches into the band (da 232),
+    # and counting the sprites on every scanline over the run.
+    # tests/check_band.py compares every read with the model and the WINDOW
+    # snapshot's band with the band and mountain pictures.
+    PROBE="band_probe.lua"
+    BAND_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+    BAND_SHIP_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
+    # the ~24-frame AES preamble, the game start at 603, the climb to the
+    # peak and a full left+right spin (~240 left + ~10 right frames) — 1600
+    # MAME frames is ample.
+    BOOT_FRAMES="${BOOT_FRAMES:-1600}"
+fi
+if [[ "$MODE" == console ]]; then
+    # dome-scenery Task 7: the console. The probe plays the centred game and
+    # snapshots the title (fc 0) and an early whole-dome play frame (fc 30,
+    # before the first missile at fc 59); it dumps all 20 columns' SCB1/SCB2/
+    # SCB3/SCB4, every slot's SCB3/SCB4 and the fix rows, and counts the
+    # sprites on every scanline over the whole game. tests/check_console.py
+    # compares the columns with build/console_map.h, the panel's clean pixels
+    # with the generator's picture, the title's hide, and the worst line.
+    PROBE="console_probe.lua"
+    CON_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+    # the game starts at MAME ~603; the census runs over the WHOLE centred
+    # game (GAME OVER at fc 27142, the collapse leg's model), so the stated
+    # worst is the game's worst: ~28100 MAME frames (like the ground leg).
+    BOOT_FRAMES="${BOOT_FRAMES:-28100}"
+fi
+if [[ "$MODE" == props ]]; then
+    # dome-scenery Task 12/13: the trees and rocks. The probe walks the ship
+    # up to the peak, spins the dome left through the whole turn (0..239) and
+    # back right to 0, then plays the centred game, snapshotting the title
+    # (fc 0) and an early whole-dome play frame (fc 30, before the first
+    # missile at fc 59). It reads ship.dome_angle there, dumps all
+    # PROP_SLOTS (51) prop slots' SCB1/SCB2/SCB3/SCB4 and each shown prop's
+    # bank, every slot's SCB3/SCB4 and the higher slots' tile rows and the
+    # fix rows for the pixel proof, counts the sprites on every scanline over
+    # the whole run, and on every frame whose dome angle changed dumps every
+    # prop slot's SCB1 rows 0..4, SCB2/SCB3/SCB4 and each shown prop's bank
+    # entries 1/13. tests/check_props.py compares the angle frames and the
+    # PLAY slots/banks with tests/props_model.py, the clean prop pixels with
+    # the model's palette, the title's hide, and the worst line. The whole
+    # turn lands in the first ~630 game frames, so the 28100-frame run (the
+    # whole run's census) stays as it is.
+    PROBE="props_probe.lua"
+    PROPS_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+    PROPS_SHIP_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
+    # the game starts at MAME ~603; the census runs over the WHOLE centred
+    # game (GAME OVER at fc 27142, the collapse leg's model), so the stated
+    # worst is the game's worst: ~28100 MAME frames (like the ground leg).
+    BOOT_FRAMES="${BOOT_FRAMES:-28100}"
+fi
+if [[ "$MODE" == ground ]]; then
+    # dome-scenery Task 5: the grass. The probe plays the centred full game
+    # (the collapse leg's policy: the first dome death at fc 8359, the
+    # collapse's gone frames after it, GAME OVER at fc 27142 under the
+    # default Start's seed) and snapshots the title (fc 0), an early
+    # whole-dome frame (fc 30, before the first missile) and the first
+    # all-dome-hidden frame after a whole dome. tests/check_ground.py
+    # compares the clean band and the shadow pixels with the generated art
+    # and states the worst sprites-per-scanline count.
+    PROBE="ground_probe.lua"
+    GROUND_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+    # the game starts at MAME ~603; the first dome death is at fc 8359 and
+    # its collapse's gone frames follow. The census runs over the WHOLE
+    # centred game (GAME OVER at fc 27142 — the collapse leg's model), so
+    # the stated worst is the game's worst: ~28100 MAME frames (like the
+    # collapse leg).
+    BOOT_FRAMES="${BOOT_FRAMES:-28100}"
+fi
+if [[ "$MODE" == ripple ]]; then
+    # dome-scenery Task 19: the grass ripples by palette rotation. The probe
+    # plays the props leg's spin (climb to the peak, turn the dome left
+    # through the whole turn and back right to 0) then the centred game
+    # (A every 11 frames) until the first dome death's collapse: the props
+    # leg's first split is at cart fc 9120 and the collapse's gone frames at
+    # ~9179, so 10000 MAME frames (the game starts at ~603) cover the turn,
+    # the gone state and the respawn. tests/check_ripple.py compares every
+    # play frame's ripple banks with build/ground_map.h at the previous
+    # frame's angle, every palette write's raster line, the ground SCB1
+    # words, and three snapshots' uncovered ground pixels with the C ROM.
+    PROBE="ripple_probe.lua"
+    PROPS_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
+    PROPS_SHIP_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$2 ~ /^[BbDd]$/ && $3 == "ship" { print "0x" $1 }')"
+    BOOT_FRAMES="${BOOT_FRAMES:-10000}"
+fi
 if [[ "$MODE" == flow-pages || "$MODE" == flow-pages-c ]]; then
-    # the M6 Task 6 legs. flow-pages (AES, no Start at all, 3300 frames):
+    # the M6 Task 6 legs. flow-pages (AES, no Start at all, 3400 frames):
     # the title starts at ~frame 24 (no BIOS logo since the M8 fixes),
-    # so the 8 -> 0 wrap (9 x 295 title frames) lands at ~2680 inside the
+    # so the 10 -> 0 wrap (11 x 295 title frames) lands at ~3269 inside the
     # run — the checker proves the page turned every 295 frames, that every
     # sampled title frame's fix rows equal tests/title_model.py (the
-    # page/level/t/credits read from RAM in the same frame via the T
-    # records), and the dome's SCB words / snapshots at the page PINs prove
-    # the dome is chained on page 0, hidden on pages 1..8, and rebuilt
-    # word-equal after the wrap. flow-pages-c (MVS, no coin/Start): the
+    # page/level/t/credits and board read from RAM in the same frame via the
+    # T/B records), and the dome's SCB words / snapshots at the page PINs
+    # prove the dome is chained on page 0, on pages 1..10 (the three boards
+    # included), and rebuilt word-equal after the wrap. flow-pages-c (MVS,
+    # no coin/Start): the
     # title starts at ~frame 299, so page 0 spans ~299..592; a C tap on MAME
     # frames 450 and 550 turns 0 -> 1 -> 2 (within 2 frames), with title_t
-    # reset to 0 — and the dome dumps at pages 0/1/2 prove the hidden
-    # pages. Drives the C taps through the :edge:joy:JOY1 port (the AES
+    # reset to 0 — and the dome dumps at pages 0/1/2 prove the scene's
+    # chain on the C-turned board pages. Drives the C taps through the
+    # :edge:joy:JOY1 port (the AES
     # :ctrl1: fields do not exist on the MVS machine).
     PROBE="flow_probe.lua"
     FLOW_PAGES_VAL=0
     FLOW_PAGES_C_VAL=0
-    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_PAGE_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_page" { print "0x" $1 }')"
-    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_T_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "title_t" { print "0x" $1 }')"
-    FLOW_ENTRY_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_ENTRY_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "flow_entry" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "flow_entry" { print "0x" $1 }')"
-    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$REPO/build/rom.elf" 2>/dev/null \
+    FLOW_FRAMECNT_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }' \
-        || nm "$REPO/build/rom.elf" 2>/dev/null \
+        || nm "$PROBE_ELF" 2>/dev/null \
         | awk '$2 ~ /^[BbDd]$/ && $3 == "hud_framecnt" { print "0x" $1 }')"
     if [[ "$MODE" == flow-pages ]]; then
         FLOW_PAGES_VAL=1
-        # the run must reach the 8 -> 0 wrap at ~24 + 9 x 295 = 2679 plus
+        # the run must reach the 10 -> 0 wrap at ~24 + 11 x 295 = 3269 plus
         # margin (the no-logo title starts at MAME ~24)
-        BOOT_FRAMES="${BOOT_FRAMES:-2900}"
+        BOOT_FRAMES="${BOOT_FRAMES:-3400}"
         # no Start for the whole run: the pages must turn on their own
         SG_ENABLE_VAL=0
         FLOW_DOME_SNAP_VAL="${FLOW_DOME_SNAP:-1}"
@@ -806,6 +1259,100 @@ if [[ "$MODE" == flow-pages || "$MODE" == flow-pages-c ]]; then
         BOOT_FRAMES="${BOOT_FRAMES:-1700}"
         FLOW_DOME_SNAP_VAL="${FLOW_DOME_SNAP:-1}"
         MVS_COIN_SET="-100"
+    fi
+fi
+
+if [[ "$MODE" == spider ]]; then
+    # Task S2: the stopper-spider's frame choice. The normal cart (the demo
+    # is compiled in) runs one full demo cycle on the title, then the probe
+    # starts a scripted game (walk -> jump, a shot on the landing frame, a
+    # second shot restarting the heave, a forced missile death and the
+    # respawn). The probe reads the ship/rules/mis/demo state and the ship
+    # slots' SCB1/SCB3 from RAM and VRAM, so every address comes from the
+    # freshly built ELF (nm). ~6487 demo frames to epoch 3 + the Start +
+    # ~200 game frames: 7600 MAME frames is ample.
+    PROBE="spider_probe.lua"
+    spider_sym() {
+        m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+            | awk -v n="$1" '$2 ~ /^[BbDd]$/ && $3 == n { print "0x" $1 }'
+    }
+    SPIDER_SHIP_ADDR="$(spider_sym ship)"
+    SPIDER_RULES_ADDR="$(spider_sym rules)"
+    SPIDER_MIS_ADDR="$(spider_sym mis)"
+    SPIDER_FRAMECNT_ADDR="$(spider_sym hud_framecnt)"
+    SPIDER_DEMO_EPOCH_ADDR="$(spider_sym demo_dbg_epoch)"
+    SPIDER_DEMO_FC_ADDR="$(spider_sym demo_dbg_fc)"
+    SPIDER_DEMO_HASH_ADDR="$(spider_sym demo_dbg_hash)"
+    SPIDER_MIS_CELL_RING_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_ring" && !n++ { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_ring" && !n++ { print "0x" $1 }')"
+    SPIDER_MIS_CELL_PHI_ADDR="$(m68k-neogeo-elf-nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_phi" && !n++ { print "0x" $1 }' \
+        || nm "$PROBE_ELF" 2>/dev/null \
+        | awk '$3 == "mis_cell_phi" && !n++ { print "0x" $1 }')"
+    BOOT_FRAMES="${BOOT_FRAMES:-7600}"
+fi
+
+if [[ "$MODE" == demo || "$MODE" == demo-start ]]; then
+    # Attract Task A3: the demo's state and frame budget. The FRAME_MARK
+    # cart carries the same code plus the work marks; the probe reads the
+    # cart's BSS exports from the framemark ELF (nm), like the other legs.
+    PROBE="demo_probe.lua"
+    DEMO_ELF="$REPO/build/rom-framemark.elf"
+    demo_sym() {
+        m68k-neogeo-elf-nm "$DEMO_ELF" 2>/dev/null \
+            | awk -v n="$1" '$2 ~ /^[BbDd]$/ && $3 == n { print "0x" $1 }'
+    }
+    DEMO_EPOCH_ADDR="$(demo_sym demo_dbg_epoch)"
+    DEMO_FC_ADDR="$(demo_sym demo_dbg_fc)"
+    DEMO_HASH_EPOCH_ADDR="$(demo_sym demo_dbg_hash_epoch)"
+    DEMO_HASH_FC_ADDR="$(demo_sym demo_dbg_hash_fc)"
+    DEMO_HASH_DONE_ADDR="$(demo_sym demo_dbg_hash_done)"
+    DEMO_HASH_ADDR="$(demo_sym demo_dbg_hash)"
+    DEMO_FRAMECNT_ADDR="$(demo_sym hud_framecnt)"
+    DEMO_RULES_ADDR="$(demo_sym rules)"
+    DEMO_SHIP_ADDR="$(demo_sym ship)"
+    DEMO_MIS_ADDR="$(demo_sym mis)"
+    DEMO_RADAR_ADDR="$(demo_sym radar)"
+    DEMO_TITLE_SEED_ADDR="$(demo_sym title_seed_t)"
+    DEMO_BEST_ADDR="$(demo_sym flow_board)"
+    MIS_SEED_ADDR="$(demo_sym mis_seed_used)"
+    DEMO_PAGE_ADDR="$(demo_sym title_page)"
+    DEMO_T_ADDR="$(demo_sym title_t)"
+    DEMO_LEVEL_ADDR="$(demo_sym flow_level_valid)"
+    DEMO_AES_ON_ADDR="$(demo_sym softdip_dbg_aes_on)"
+    DEMO_TOGGLES_ADDR="$(demo_sym softdip_dbg_toggles)"
+    PROPS_ANGLE_ADDR="$(demo_sym props_dbg_last_angle)"
+    WORK_START_ADDR="$(demo_sym work_start_mark)"
+    WORK_END_ADDR="$(demo_sym work_end_mark)"
+    WORK_MAX_ADDR="$(demo_sym work_max_mark)"
+    WORK_MIN_ADDR="$(demo_sym work_min_mark)"
+    if [[ "$MODE" == demo-start ]]; then
+        DEMO_MODE_VAL=start
+        # Attract D1: the press lands just after build/demo.json's first
+        # crack jump (2092), so the probe starts at demo frame 2093. The
+        # no-input game to GAME OVER is at most 23,113 frames for the
+        # title_seed_t range around the new press (the host models), then
+        # the 295-frame window, the BIOS rebuild and 100 returned demo
+        # frames: 27,002 MAME frames (Task P2's two-frame title-entry wait
+        # shifts every cart frame by two).
+        DEMO_START_DFC="$(python3 - "$REPO/build/demo.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1]))["crack_jumps"][0][0] + 1)
+PY
+)"
+        BOOT_FRAMES="${BOOT_FRAMES:-27002}"
+    else
+        DEMO_MODE_VAL=cycle
+        # entry page 0 (3242 demo frames) + two full 3245-frame cycles + the
+        # epoch-4 D hold/B restart and 100 of epoch 5's frames: 11000 covers
+        # the 10332-title-frame run plus Task P2's two-frame title-entry
+        # wait and margin. The run also presses D at epoch 2, on page 1 of
+        # epoch 3, and holds it 60 frames at epoch 4 (Attract D1).
+        # The C page-through from epoch 5's frame 120 (about 45 frames) and
+        # 100 frames of epoch 6 add 300 frames.
+        BOOT_FRAMES="${BOOT_FRAMES:-11300}"
     fi
 fi
 
@@ -849,13 +1396,14 @@ if [[ "$MODE" == flow-mvs || "$MODE" == flow-mvs-start || "$MODE" == flow-mvs-no
     CART_ARG="-cart1 esrg -bios euro"
 fi
 
-# the best-mvs nvram handling: all three runs use BEST_NVRAM_DIR as the
+# the best-mvs nvram handling: all four runs use BEST_NVRAM_DIR as the
 # nvram directory (the state lives outside $OUT, which is rm -rf'd at the
-# top of every run). Run 1 (BEST_REUSE=0) and run 3 (BEST_REUSE=0) start
+# top of every run). Run 1 (BEST_REUSE=0) and run 4 (BEST_FRESH=1) start
 # from a FRESH directory; run 2 (BEST_REUSE=1) reuses run 1's — the whole
 # point of the proof: the BIOS persisted the _backup_ram block there when
 # it entered attract mode after the game, and run 2's entry must load it
-# back and show it on the title before any game.
+# back and show it on the title before any game. Run 3 reuses it again
+# after the saved magic is patched to the old 'ESRG'.
 BEST_NVRAM_DIR="${BEST_NVRAM_DIR:-$REPO/build/best-nvram}"
 NVRAM_D="$OUT/nvram"
 if [[ "$MODE" == best-mvs ]]; then
@@ -868,12 +1416,12 @@ if [[ "$MODE" == best-mvs ]]; then
     fi
 fi
 
-# the best-aes memory-card handling (M6 Task 10): the card file lives
-# outside $OUT (rm -rf'd every run) in BEST_CARD_DIR. Run 1 (BEST_REUSE=0,
-# BEST_NOCARD=0) and run 2 (BEST_REUSE=1, sharing run 1's card) use one
-# file: run 1 starts from a FRESH one the way the task wants ("the file
-# must not exist"), run 2 reuses it — a power-off, whose proof is that
-# the card, not the per-boot backup RAM, kept the score. Run 3
+# the best-aes memory-card handling (high-score boards Task B2): the card
+# file lives outside $OUT (rm -rf'd every run) in BEST_CARD_DIR. Runs 1..3
+# use one file: run 1 starts from a FRESH one the way the task wants ("the
+# file must not exist"), run 2 reuses it — a power-off, whose proof is that
+# the card, not the per-boot backup RAM, kept the board; run 3 reuses it
+# after the saved magic is patched to the old 'ESRG'. Run 4
 # (BEST_NOCARD=1) passes no -memcard at all. The nvram/cfg are fresh per
 # run as usual (only the card crosses runs).
 BEST_CARD_DIR="${BEST_CARD_DIR:-$REPO/build/best-card}"
@@ -897,6 +1445,51 @@ if [[ "$MODE" == best-aes ]]; then
     fi
 fi
 
+if [[ "$MODE" == entry-lives || "$MODE" == entry-ruin ]]; then
+    # high-score boards Task B6: a fresh AES memory card for each backdrop's
+    # run, so the END save's answers are the fresh-card 0x81 / FORMAT / 0
+    # sequence the checker proves.
+    ENTRY_CARD_DIR="${ENTRY_CARD_DIR:-$REPO/build/entry-card-$MODE}"
+    mkdir -p "$ENTRY_CARD_DIR"
+    CARD_FILE="$ENTRY_CARD_DIR/card.neo"
+    rm -f "$CARD_FILE"
+    CARD_ARG="-memcard $CARD_FILE"
+fi
+
+# high-score boards Task B2: the old-'ESRG' leg. Run 3 of best-mvs reuses
+# run 1/2's nvram and run 3 of best-aes reuses run 1/2's card; before MAME
+# starts, the saved board's magic 'ESR2' is overwritten with the old
+# best_t's 'ESRG' magic. The cart's board_valid must reject it and the
+# entry must start from the default board. The MVS saveram stores the
+# backup words swapped (MAME's file is little-endian), so both byte orders
+# are tried; the card image may store either.
+if [[ "${BEST_OLD:-0}" == "1" ]]; then
+    if [[ "$MODE" == best-mvs ]]; then
+        OLD_FILE="$NVRAM_D/neogeo/saveram"
+    else
+        OLD_FILE="$CARD_FILE"
+    fi
+    [[ -f "$OLD_FILE" ]] || { echo "boot_test: BEST_OLD needs $OLD_FILE" >&2; exit 2; }
+    python3 - "$OLD_FILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+data = bytearray(open(path, "rb").read())
+pairs = [
+    (bytes.fromhex("53 45 32 52"), bytes.fromhex("53 45 47 52")),  # words
+    (bytes.fromhex("45 53 52 32"), bytes.fromhex("45 53 52 47")),  # bytes
+]
+for old, new in pairs:
+    i = data.find(old)
+    if i >= 0:
+        data[i:i + len(old)] = new
+        open(path, "wb").write(data)
+        print(f"boot_test: old 'ESRG' board magic patched at {i} in {path}")
+        break
+else:
+    sys.exit(f"boot_test: no 'ESR2' board magic in {path}")
+PYEOF
+fi
+
 # the sound modes record the session's audio with -wavwrite (the M7 Task 1
 # proof: the checker measures the WAV silently-before / loud-after every
 # send and the audible lengths; the M7 Task 2 game mode measures the same
@@ -911,6 +1504,25 @@ if [[ "$MODE" == sound || "$MODE" == sound-mvs || "$MODE" == sound-game || "$MOD
     WAV_ARG="-wavwrite $SOUND_WAV"
 fi
 
+# Plan P2 amendment 3: the Start is pressed on the cart's title frame count.
+# On AES the title's first title_frame starts at MAME 25, so HEAD's title
+# count at a MAME frame is that frame - 25 (the confirmed 600 -> 575, and the
+# flow legs' 1200 -> 1175 and 1400 -> 1375). The hold is the same number of
+# frames as the old SG_BEGIN..SG_END window.
+SG_BEGIN="${SG_BEGIN:-600}"
+SG_END="${SG_END:-604}"
+SG_TITLE_BEGIN=$((SG_BEGIN - 25))
+SG_TITLE_END=$((SG_TITLE_BEGIN + SG_END - SG_BEGIN))
+# On MVS the coin at 1500 makes the BIOS enter the cart title afresh; HEAD's
+# title count at the calibrated 1800 Start is 280 (mis_seed_from(280) =
+# 0xadf9). The same 5-frame hold as MVS_START..+4.
+if [[ "${MVS_START_VAL:--100}" == "1800" ]]; then
+    MVS_TITLE_START=280
+else
+    MVS_TITLE_START=-1
+fi
+MVS_TITLE_END=$((MVS_TITLE_START + 4))
+
 FRAMES="${FRAMES:-${BOOT_FRAMES:-900}}" HOLD="${BOOT_HOLD:-}" OUT="$OUT/probe.txt" \
     REPO="$REPO" \
     HUD_EVENTS_ADDR="${HUD_EVENTS_ADDR:-0}" HUD_FRAMECNT_ADDR="${HUD_FRAMECNT_ADDR:-0}" \
@@ -920,14 +1532,17 @@ FRAMES="${FRAMES:-${BOOT_FRAMES:-900}}" HOLD="${BOOT_HOLD:-}" OUT="$OUT/probe.tx
     HUD_RULES_ADDR="${HUD_RULES_ADDR:-0}" \
     GO_TEST_ADDR="${GO_TEST_ADDR:-0}" GO_FRESH_ADDR="${GO_FRESH_ADDR:-0}" \
     END_ADDR="${END_ADDR:-0}" MAX_ADDR="${MAX_ADDR:-0}" MIN_ADDR="${MIN_ADDR:-0}" \
-    START_ADDR="${START_ADDR:-0}" \
+    START_ADDR="${START_ADDR:-0}" COMMIT_ADDR="${COMMIT_ADDR:-0}" \
     CRACK_ANGLE="${CRACK_ANGLE:-0}" CRACK_ANGLE_ADDR="${CRACK_ANGLE_ADDR:-0}" \
+    SHIP_ADDR="${SHIP_ADDR:-0}" \
     CRACK_RULES_ADDR="${CRACK_RULES_ADDR:-0}" \
-    STARS_ANGLE_ADDR="${STARS_ANGLE_ADDR:-0}" STARS_FRAMECNT_ADDR="${STARS_FRAMECNT_ADDR:-0}" \
     RADAR_MIS_ADDR="${RADAR_MIS_ADDR:-0}" RADAR_SHIP_ADDR="${RADAR_SHIP_ADDR:-0}" \
     RADAR_FRAMECNT_ADDR="${RADAR_FRAMECNT_ADDR:-0}" \
     RADAR_RADAR_ADDR="${RADAR_RADAR_ADDR:-0}" \
     SG_BEGIN="${SG_BEGIN:-600}" SG_END="${SG_END:-604}" SG_ENABLE="${SG_ENABLE_VAL:-${SG_ENABLE:-1}}" \
+    TITLE_SEED_ADDR="${TITLE_SEED_ADDR:-0}" \
+    SG_TITLE_BEGIN="${SG_TITLE_BEGIN}" SG_TITLE_END="${SG_TITLE_END}" \
+    MVS_TITLE_START="${MVS_TITLE_START}" MVS_TITLE_END="${MVS_TITLE_END}" \
     FLOW_RESTART="${FLOW_RESTART_VAL:-0}" FLOW_FRAMECNT_ADDR="${FLOW_FRAMECNT_ADDR:-0}" \
     FLOW_MVS="${FLOW_MVS_VAL:-0}" MVS_COIN="${MVS_COIN_SET:-${MVS_COIN:-1500}}" \
     FLOW_NORESTART="${FLOW_NORESTART_VAL:-0}" FLOW_RULES_ADDR="${FLOW_RULES_ADDR:-0}" \
@@ -936,18 +1551,65 @@ FRAMES="${FRAMES:-${BOOT_FRAMES:-900}}" HOLD="${BOOT_HOLD:-}" OUT="$OUT/probe.tx
     FLOW_ENTRY_ADDR="${FLOW_ENTRY_ADDR:-0}" FLOW_DOME_SNAP="${FLOW_DOME_SNAP_VAL:-0}" \
     FLOW_LEVEL="${FLOW_LEVEL_VAL:-0}" FLOW_RETURN="${FLOW_RETURN_VAL:-0}" \
     FLOW_LEVEL_ADDR="${FLOW_LEVEL_ADDR:-0}" FLOW_MIS_ADDR="${FLOW_MIS_ADDR:-0}" \
+    FLOW_SHIP_ADDR="${FLOW_SHIP_ADDR:-0}" \
+    FLOW_CELL_RING_ADDR="${FLOW_CELL_RING_ADDR:-0}" \
+    FLOW_CELL_PHI_ADDR="${FLOW_CELL_PHI_ADDR:-0}" \
     FLOW_BEST="${FLOW_BEST_VAL:-0}" FLOW_BEST_RETURN="${FLOW_BEST_RETURN_VAL:-0}" \
     FLOW_BEST_ADDR="${FLOW_BEST_ADDR:-0}" \
+    FLOW_STATE_ADDR="${FLOW_STATE_ADDR:-0}" ENTRY_STATE_ADDR="${ENTRY_STATE_ADDR:-0}" \
+    ENTRY_FC_ADDR="${ENTRY_FC_ADDR:-0}" FLOW_ENTRY_FINISH="${FLOW_ENTRY_FINISH_VAL:-0}" \
+    FLOW_BLINK_ACTIVE_ADDR="${FLOW_BLINK_ACTIVE_ADDR:-0}" \
+    ENTRY_CASE="${ENTRY_CASE_VAL:-}" \
     FLOW_BEST_AES="${FLOW_BEST_AES_VAL:-0}" FLOW_CARDLOG_ADDR="${FLOW_CARDLOG_ADDR:-0}" \
     SOUND_LOG_ADDR="${SOUND_LOG_ADDR:-0}" SOUND_LOGN_ADDR="${SOUND_LOGN_ADDR:-0}" \
     SOUND_TITLE_FC_ADDR="${SOUND_TITLE_FC_ADDR:-0}" \
+    SOUND_DEMO="${SOUND_DEMO_VAL:-0}" \
     SOUND_GLOG_ADDR="${SOUND_GLOG_ADDR:-0}" SOUND_GN_ADDR="${SOUND_GN_ADDR:-0}" \
     SOUND_FRAMECNT_ADDR="${SOUND_FRAMECNT_ADDR:-0}" \
     SOUND_RADAR_MODE="${SOUND_RADAR_VAL:-0}" \
     SOUND_GAME_POLICY="${SOUND_GAME_POLICY:-centred}" \
+    DEMO_MODE="${DEMO_MODE_VAL:-cycle}" \
+    DEMO_EPOCH_ADDR="${DEMO_EPOCH_ADDR:-0}" DEMO_FC_ADDR="${DEMO_FC_ADDR:-0}" \
+    DEMO_HASH_EPOCH_ADDR="${DEMO_HASH_EPOCH_ADDR:-0}" \
+    DEMO_HASH_FC_ADDR="${DEMO_HASH_FC_ADDR:-0}" \
+    DEMO_HASH_DONE_ADDR="${DEMO_HASH_DONE_ADDR:-0}" \
+    DEMO_HASH_ADDR="${DEMO_HASH_ADDR:-0}" \
+    DEMO_FRAMECNT_ADDR="${DEMO_FRAMECNT_ADDR:-0}" \
+    DEMO_RULES_ADDR="${DEMO_RULES_ADDR:-0}" DEMO_SHIP_ADDR="${DEMO_SHIP_ADDR:-0}" \
+    DEMO_MIS_ADDR="${DEMO_MIS_ADDR:-0}" DEMO_RADAR_ADDR="${DEMO_RADAR_ADDR:-0}" \
+    DEMO_TITLE_SEED_ADDR="${DEMO_TITLE_SEED_ADDR:-0}" \
+    DEMO_BEST_ADDR="${DEMO_BEST_ADDR:-0}" \
+    DEMO_PAGE_ADDR="${DEMO_PAGE_ADDR:-0}" DEMO_T_ADDR="${DEMO_T_ADDR:-0}" \
+    DEMO_LEVEL_ADDR="${DEMO_LEVEL_ADDR:-0}" \
+    DEMO_AES_ON_ADDR="${DEMO_AES_ON_ADDR:-0}" \
+    DEMO_TOGGLES_ADDR="${DEMO_TOGGLES_ADDR:-0}" \
+    PROPS_ANGLE_ADDR="${PROPS_ANGLE_ADDR:-0}" \
+    DEMO_START_DFC="${DEMO_START_DFC:-0}" \
+    WORK_START_ADDR="${WORK_START_ADDR:-0}" WORK_END_ADDR="${WORK_END_ADDR:-0}" \
+    WORK_MAX_ADDR="${WORK_MAX_ADDR:-0}" WORK_MIN_ADDR="${WORK_MIN_ADDR:-0}" \
+    SKY_FRAMECNT_ADDR="${SKY_FRAMECNT_ADDR:-0}" \
+    GROUND_FRAMECNT_ADDR="${GROUND_FRAMECNT_ADDR:-0}" \
+    MTN_FRAMECNT_ADDR="${MTN_FRAMECNT_ADDR:-0}" MTN_SHIP_ADDR="${MTN_SHIP_ADDR:-0}" \
+    BAND_FRAMECNT_ADDR="${BAND_FRAMECNT_ADDR:-0}" BAND_SHIP_ADDR="${BAND_SHIP_ADDR:-0}" \
+    CON_FRAMECNT_ADDR="${CON_FRAMECNT_ADDR:-0}" \
+    PROPS_FRAMECNT_ADDR="${PROPS_FRAMECNT_ADDR:-0}" \
+    PROPS_SHIP_ADDR="${PROPS_SHIP_ADDR:-0}" TEAR_DRIVE="${TEAR_DRIVE:-spin}" \
+    CENSUS_EVERY="${CENSUS_EVERY:-10}" \
     MVS_START="${MVS_START_VAL:--100}" \
     MIS_SEED_ADDR="${MIS_SEED_ADDR:-0}" MIS_ADDR="${MIS_ADDR:-0}" \
+    MIS_R_SPAWN_ADDR="${MIS_R_SPAWN_ADDR:-0}" \
+    MIS_CELL_RING_ADDR="${MIS_CELL_RING_ADDR:-0}" \
+    MIS_CELL_PHI_ADDR="${MIS_CELL_PHI_ADDR:-0}" \
     MIS_PROBE_FIRST="${MIS_FIRST_VAL:-0}" \
+    SPIDER_SHIP_ADDR="${SPIDER_SHIP_ADDR:-0}" \
+    SPIDER_RULES_ADDR="${SPIDER_RULES_ADDR:-0}" \
+    SPIDER_MIS_ADDR="${SPIDER_MIS_ADDR:-0}" \
+    SPIDER_FRAMECNT_ADDR="${SPIDER_FRAMECNT_ADDR:-0}" \
+    SPIDER_DEMO_EPOCH_ADDR="${SPIDER_DEMO_EPOCH_ADDR:-0}" \
+    SPIDER_DEMO_FC_ADDR="${SPIDER_DEMO_FC_ADDR:-0}" \
+    SPIDER_DEMO_HASH_ADDR="${SPIDER_DEMO_HASH_ADDR:-0}" \
+    SPIDER_MIS_CELL_RING_ADDR="${SPIDER_MIS_CELL_RING_ADDR:-0}" \
+    SPIDER_MIS_CELL_PHI_ADDR="${SPIDER_MIS_CELL_PHI_ADDR:-0}" \
 timeout -s KILL 120 "${MAME_CMD[@]}" -rompath "$OUT/roms" -hashpath "$OUT/hash" \
     -video none -sound none -nothrottle -skip_gameinfo \
     -cfg_directory "$OUT/cfg" -nvram_directory "$NVRAM_D" -snapshot_directory "$OUT/snap" -autoboot_script "$REPO/scripts/${PROBE}" \
@@ -978,17 +1640,18 @@ elif [[ "$MODE" == framemark || "$MODE" == crackframemark ]]; then
         FM_TAG="crackframemark"   # no collapse happens (the hook keeps the dome whole)
     fi
     python3 "$REPO/tests/check_frame_mark.py" "$OUT/probe.txt" "$END_ADDR" "$FM_TAG"
+elif [[ "$MODE" == tear ]]; then
+    python3 "$REPO/tests/check_tear.py" "$OUT/probe.txt"
 elif [[ "$MODE" == ship-respawn || "$MODE" == ship-respawn-nodeath ]]; then
     SHIP_NODEATH="${NODEATH_VAL:-0}" python3 "$REPO/tests/check_ship_respawn.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" \
         "$SHIP_FRAMECNT_ADDR" "$SHIP_RC_ADDR"
+elif [[ "$MODE" == spider ]]; then
+    python3 "$REPO/tests/check_spider.py" "$OUT/probe.txt"
 elif [[ "$MODE" == hud ]]; then
     python3 "$REPO/tests/check_hud.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" "$HUD_EVENTS_ADDR"
 elif [[ "$MODE" == gameover-draw ]]; then
     python3 "$REPO/tests/check_gameover_draw.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt"  \
         "$GO_TEST_ADDR" "$GO_FRESH_ADDR"
-elif [[ "$MODE" == stars ]]; then
-    python3 "$REPO/tests/check_stars.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" \
-        "$STARS_ANGLE_ADDR" "$STARS_FRAMECNT_ADDR"
 elif [[ "$MODE" == radar ]]; then
     python3 "$REPO/tests/check_radar.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" \
         "$RADAR_MIS_ADDR" "$RADAR_SHIP_ADDR" "$RADAR_FRAMECNT_ADDR"
@@ -996,12 +1659,14 @@ elif [[ "$MODE" == radar ]]; then
     # orchestrator (the task's proof 5)
     cp "${SNAP:-$OUT/snap.png}" "$REPO/docs/superpowers/m5-radar.png"
 elif [[ "$MODE" == sound || "$MODE" == sound-mvs ]]; then
-    # the M7 Task 1 sound check: every send acknowledged, and the recorded
-    # WAV is silent before each send and loud right after, with the
-    # audible length matching the sample's (the MVS leg passes "mvs").
+    # the sound checks: the AES leg (M7 Task 1) proves every send
+    # acknowledged and each sample silent-before / loud-after / right
+    # length; the MVS leg (Attract A4) proves the demo's commands match
+    # the model with DEMO SOUND ON, none with it OFF, a real game after
+    # OFF still sounds, and the ROM header names the DIP.
     [[ -f "$SOUND_WAV" ]] || { echo "boot_test: FAIL — no sound WAV at $SOUND_WAV"; exit 1; }
     if [[ "$MODE" == sound-mvs ]]; then
-        python3 "$REPO/tests/check_sound.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" "$SOUND_WAV" mvs
+        python3 "$REPO/tests/check_sound.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" "$SOUND_WAV" demo "$DEMO_ELF"
     else
         python3 "$REPO/tests/check_sound.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" "$SOUND_WAV"
     fi
@@ -1012,6 +1677,34 @@ elif [[ "$MODE" == sound-game || "$MODE" == sound-radar ]]; then
     # radar leg's pips come every 20 frames from the lock's first frame.
     [[ -f "$SOUND_WAV" ]] || { echo "boot_test: FAIL — no sound WAV at $SOUND_WAV"; exit 1; }
     python3 "$REPO/tests/check_sound_game.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" "$SOUND_WAV" "$MODE"
+elif [[ "$MODE" == sky ]]; then
+    python3 "$REPO/tests/check_sky.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt"
+elif [[ "$MODE" == mountains ]]; then
+    # dome-scenery Task 6: the mountains. The probe presses Start, walks the
+    # ship up to the peak and spins the dome left through the panorama (and
+    # back right to 230), reading the driver's SCB3/SCB4 and all 21 chain
+    # columns' SCB1 words at dome angles 0, 1, 160, 161, 239 and 230, and
+    # snapshotting the title (fc 0) and a wrapping frame with a scroll phase
+    # (da 161). tests/check_mountains.py compares every read with the model
+    # and the WINDOW snapshot's band with the generated picture.
+    python3 "$REPO/tests/check_mountains.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt"
+elif [[ "$MODE" == band ]]; then
+    # dome-scenery Task 17: the band. The probe presses Start, walks the
+    # ship up to the peak and spins the dome left through the panorama (and
+    # back right to 230), reading the driver's SCB3/SCB4 and all 21 chain
+    # columns' SCB1 words at eight dome angles, and snapshotting the title
+    # (fc 0) and a wrapping frame with a scroll phase (da 232).
+    python3 "$REPO/tests/check_band.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt"
+elif [[ "$MODE" == console ]]; then
+    python3 "$REPO/tests/check_console.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt"
+elif [[ "$MODE" == props ]]; then
+    python3 "$REPO/tests/check_props.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt"
+elif [[ "$MODE" == ground ]]; then
+    python3 "$REPO/tests/check_ground.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt"
+elif [[ "$MODE" == ripple ]]; then
+    python3 "$REPO/tests/check_ripple.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt"
+elif [[ "$MODE" == demo || "$MODE" == demo-start ]]; then
+    python3 "$REPO/tests/check_demo.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" "$MODE"
 elif [[ "$MODE" == flow || "$MODE" == flow-restart ]]; then
     python3 "$REPO/tests/check_flow.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" \
         "$FLOW_FRAMECNT_ADDR" "${FLOW_RESTART_VAL:-0}"
@@ -1024,17 +1717,27 @@ elif [[ "$MODE" == flow-pages || "$MODE" == flow-pages-c ]]; then
 elif [[ "$MODE" == flow-level || "$MODE" == flow-return || "$MODE" == flow-return-best ]]; then
     # the M6 Task 7 legs: flow-level proves the B level select and the
     # Start's level; flow-return proves the fresh boot (page 0 / NORMAL),
-    # the NORMAL game, and the HIGH SCORES return; flow-return-best (M6
+    # the NORMAL game, and NORMAL's board-page return; flow-return-best (M6
     # Task 9) adds the backup-RAM high-score proof on the returned title.
     python3 "$REPO/tests/check_flow.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" \
         "$FLOW_FRAMECNT_ADDR" "0" "$MODE"
+elif [[ "$MODE" == entry-lives || "$MODE" == entry-ruin ]]; then
+    # high-score boards Task B6: the entry-screen checker (ring tables,
+    # dome angle, typed initials/erase/auto-jump/END, board + card save,
+    # census, and the returned title's blink).
+    python3 "$REPO/tests/check_entry.py" "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" \
+        "$FLOW_FRAMECNT_ADDR" "$ENTRY_STATE_ADDR" "$ENTRY_FC_ADDR" \
+        "$FLOW_STATE_ADDR" "$FLOW_CARDLOG_ADDR" "$ENTRY_CASE_VAL"
 elif [[ "$MODE" == best-mvs ]]; then
-    # the M6 Task 9 best-mvs leg: the checker keys the nvram reuse/new
-    # state on BEST_REUSE (2 = run 2, sharing; 3 = run 3, fresh; else run 1).
-    if [[ "${BEST_REUSE:-0}" == "1" ]]; then
+    # high-score boards Task B2: the checker keys the nvram state on
+    # BEST_REUSE / BEST_OLD / BEST_FRESH (2 = run 2, sharing; 3 = run 3,
+    # old 'ESRG' magic; 4 = run 4, fresh; else run 1).
+    if [[ "${BEST_REUSE:-0}" == "1" && "${BEST_OLD:-0}" == "1" ]]; then
+        BEST_LEG=3
+    elif [[ "${BEST_REUSE:-0}" == "1" ]]; then
         BEST_LEG=2
     elif [[ "${BEST_FRESH:-0}" == "1" ]]; then
-        BEST_LEG=3
+        BEST_LEG=4
     else
         BEST_LEG=1
     fi
@@ -1042,13 +1745,15 @@ elif [[ "$MODE" == best-mvs ]]; then
         "${SNAP:-$OUT/snap.png}" "$OUT/probe.txt" \
         "$FLOW_FRAMECNT_ADDR" "0" "$MODE"
 elif [[ "$MODE" == best-aes ]]; then
-    # the M6 Task 10 best-aes leg: the checker keys the card reuse/new
-    # state on BEST_REUSE (2 = run 2, sharing the card) and BEST_NOCARD
-    # (3 = run 3, no card; else run 1).
-    if [[ "${BEST_REUSE:-0}" == "1" ]]; then
+    # high-score boards Task B2: the checker keys the card state on
+    # BEST_REUSE / BEST_OLD / BEST_NOCARD (2 = run 2, sharing the card; 3 =
+    # run 3, old 'ESRG' magic; 4 = run 4, no card; else run 1).
+    if [[ "${BEST_REUSE:-0}" == "1" && "${BEST_OLD:-0}" == "1" ]]; then
+        BEST_CARD_LEG=3
+    elif [[ "${BEST_REUSE:-0}" == "1" ]]; then
         BEST_CARD_LEG=2
     elif [[ "${BEST_NOCARD:-0}" == "1" ]]; then
-        BEST_CARD_LEG=3
+        BEST_CARD_LEG=4
     else
         BEST_CARD_LEG=1
     fi

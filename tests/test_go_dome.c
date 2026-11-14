@@ -91,6 +91,64 @@ int main(void)
     CHECK(r.game_over == 1 && r.dome_dead == 0 && dome_draw_gone(&r) == 0);
     CHECK(r.nbroken == 1);                 /* the broken cell stays */
 
+    /* ---- dome_is_whole, the ground's shadow switch (dome-scenery
+     * Task 5): the drawing's own answer to "is the whole chain drawn this
+     * frame", derived exactly like dome_collapse's branch order. It must
+     * be 0 from the collapse's first split on, 0 in the gone frames and
+     * under a game-ending dome death's GAME OVER, and 1 while the dome is
+     * drawn whole — including a NON-dome death's GAME OVER (the dome is
+     * still there). */
+    rules_reset(&r);
+    ship_reset(&s);
+    mis_reset(&m);
+    CHECK(dome_is_whole(&r) == 1);         /* a fresh game: whole */
+    /* a dome death: the first split */
+    m.spawn_timer = 255;
+    r.lives = 3;
+    for (i = 0; i < 38; i++)
+        crack(&r, &s, whole38[i]);
+    rules_end(&r, &s, &m);
+    CHECK(r.dead_t && r.dome_dead == 1);
+    CHECK(dome_is_whole(&r) == 0);         /* the collapse: split */
+    /* through the gone frames (f >= COLLAPSE_GONE) */
+    for (i = 0; i < 100; i++)
+        rules_begin(&r, &s, &m, 0);
+    CHECK(collapse_frac(&r) >= COLLAPSE_GONE);
+    CHECK(dome_is_whole(&r) == 0);         /* gone */
+    /* the respawn brings it back */
+    while (r.dead_t)
+        rules_begin(&r, &s, &m, 0);
+    CHECK(r.dome_dead == 1 && r.dead_t == 0);
+    CHECK(dome_is_whole(&r) == 1);         /* rebuilt: whole again */
+
+    /* a game-ending dome death: the gate keeps it gone under GAME OVER */
+    rules_reset(&r);
+    ship_reset(&s);
+    mis_reset(&m);
+    r.lives = 1;
+    m.spawn_timer = 255;
+    for (i = 0; i < 38; i++)
+        crack(&r, &s, whole38[i]);
+    rules_end(&r, &s, &m);
+    CHECK(dome_is_whole(&r) == 0);
+    for (i = 0; i < DEAD_FRAMES; i++)
+        rules_begin(&r, &s, &m, 0);
+    CHECK(r.game_over == 1 && dome_draw_gone(&r) == 1);
+    CHECK(dome_is_whole(&r) == 0);         /* hidden through GAME OVER */
+
+    /* a NON-dome death's GAME OVER draws the dome whole */
+    rules_reset(&r);
+    ship_reset(&s);
+    mis_reset(&m);
+    r.lives = 1;
+    m.spawn_timer = 255;
+    crack(&r, &s, 27);
+    rules_end(&r, &s, &m);
+    for (i = 0; i < DEAD_FRAMES; i++)
+        rules_begin(&r, &s, &m, 0);
+    CHECK(r.game_over == 1 && r.dome_dead == 0);
+    CHECK(dome_is_whole(&r) == 1);         /* the dome is still drawn */
+
     if (!fails)
         printf("test_go_dome: all passed\n");
     return fails != 0;

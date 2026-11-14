@@ -8,20 +8,41 @@ from collections import defaultdict
 import numpy as np
 
 FREQ = 5             # pentagon to pentagon = FREQ cell steps
-RIM_DEG = 63.5       # keep whole polygons whose centre is within RIM_DEG of the peak
-CAP_DEG = 62.0       # only if RIM_DEG is None: polar angle of a flat cut
+# Dome-scenery Task 3: the dome's picture has a flat base. RIM_DEG is None
+# and the sphere is cut by the plane y = cos(CAP_DEG); 69.59 deg is the
+# lowest corner of the 76 whole cells (69.585), so the walkable cells do
+# not change and the cut only adds partial picture pieces.
+RIM_DEG = None       # if set: keep whole polygons whose centre is within RIM_DEG of the peak
+CAP_DEG = 69.59      # only if RIM_DEG is None: polar angle of a flat cut
+# The radar's roof is drawn to the Vectrex camera-facing rim, a separate
+# constant from the dome's picture: Task 3's flat cut does not move the
+# radar (render_radar.py reads this; its pictures stay byte-identical).
+RADAR_RIM_DEG = 63.5
 CAM_ELEV_DEG = 38.0  # camera elevation, seen from the sphere centre
 CAM_DIST = 2.6       # camera distance from the sphere centre (radius 1)
 LOOK_Y = 0.55        # the camera looks at (0, LOOK_Y, 0)
 STEPS = 240          # rotation steps per turn
 VIEWS = STEPS // 5   # distinct views (5-fold symmetry)
 
-DOME_W = 176         # the dome box on the Neo Geo: 11 sprite columns ...
-DOME_H = 128         # ... of 8 tiles
+# ---- the dome's one size knob (the dome-scenery plan's Task 1) ----
+# The box the dome's sprites are laid out in: DOME_COLS 16-px sprite
+# columns by DOME_ROWS 16-px tiles. The rendered dome is DOME_SCALE times
+# the size of the scale that fills a full 11x8 = 176x128 box, so shrinking
+# the box alone does NOT shrink the dome (the render stays the same size,
+# with more margin round it); DOME_SCALE alone does. Every picture and
+# table that depends on the dome's size reads fit(); the C side reads the
+# box from build/dome_map.h (DOME_COLS/DOME_ROWS), generated here.
+DOME_COLS = 8        # sprite columns (16 px each): 2/3 of the reference 11
+DOME_ROWS = 6        # tiles tall (16 px each): 2/3 of the reference 8
+DOME_SCALE = 2 / 3   # the dome's render size, x the full box's fit
+DOME_W = 16 * DOME_COLS   # the dome box on the Neo Geo ...
+DOME_H = 16 * DOME_ROWS   # ... in pixels
 MARGIN = 2.0         # px kept clear inside the box (room for the edge glow)
 
-# light for the glass shading: fixed to the camera's frame, in the x = 0
-# plane so view v and view 48 - v stay exact mirror images
+# Legacy light for the ship and missiles (they keep the old upper-behind
+# light, so their pictures do not change). The DOME's light is
+# render_dome.LIGHT: the upper left, slightly behind, chosen with the user
+# from a mockup (Dome-scenery Task 3).
 LIGHT = np.array([0.0, 1.0, 0.6])
 LIGHT = LIGHT / np.linalg.norm(LIGHT)
 
@@ -178,16 +199,56 @@ def front_faces(faces, world):
             if face_normal(world, f) @ (pos - world[list(f)].mean(axis=0)) > 0]
 
 
+# the reference box: 11 x 8 tiles. The full-box fit below is the size the
+# dome has always had; DOME_SCALE scales that render, not the box.
+REF_W = 16 * 11
+REF_H = 16 * 8
+
+
+def whole_cells(pts, faces):
+    """The walkable cells (the 76 whole polygons; with a flat cut, the
+    whole ones whose centre is clear of the cut) as [(face, centre), ...]
+    sorted peak first. The partial pieces cut by the flat base are NOT
+    cells: they are only part of the dome's picture."""
+    y0 = math.cos(math.radians(CAP_DEG))
+    cells = []
+    for f in faces:
+        P = pts[list(f)]
+        c = P.mean(axis=0)
+        c /= np.linalg.norm(c)
+        if RIM_DEG is None and (len(f) < 5 or np.any(np.abs(P[:, 1] - y0) < 1e-6)
+                                or math.degrees(math.acos(min(1.0, c[1]))) > CAP_DEG - CELL_RIM_MARGIN_DEG):
+            continue                                             # clipped by / too near the cut
+        cells.append((f, c))
+    cells.sort(key=lambda fc: -fc[1][1])                         # peak first
+    return cells
+
+
 def fit():
-    """(scale, ox, oy): raw -> px = (raw.x * scale + ox, oy - raw.y * scale),
-    the widest view spanning DOME_W - 2*MARGIN and the lowest point on the
-    box's bottom margin. (Measured from the Vectrex geometry: at 172 px wide
-    the dome is ~123 px tall, inside 128 - 2*MARGIN.)"""
-    pts = build_mesh()[0]
-    allraw = np.vstack([project(pts, s)[0] for s in range(VIEWS)])
-    scale = (DOME_W / 2 - MARGIN) / np.abs(allraw[:, 0]).max()
-    top_room = (allraw[:, 1].max() - allraw[:, 1].min()) * scale
-    assert top_room <= DOME_H - 2 * MARGIN, f"dome too tall for the box: {top_room:.1f} px"
+    """(scale, ox, oy): raw -> px = (raw.x * scale + ox, oy - raw.y * scale).
+
+    The dome is rendered at DOME_SCALE times the scale that fills the
+    reference 176x128 box (the widest view spans REF_W - 2*MARGIN, the
+    lowest point sits MARGIN above the bottom), centred in the actual
+    DOME_W x DOME_H box. The scaled dome must fit inside the box with
+    MARGIN on each side; a box too small for DOME_SCALE fails here.
+
+    The reference scale is computed from the 76-CELL mesh, not from the
+    flat-based picture: the picture's partial pieces reach barely lower
+    (their bottom is the cut plane), but the task keeps the size exactly
+    as it was (Dome-scenery Task 3)."""
+    pts, _, faces = build_mesh()
+    used = sorted({i for f, _ in whole_cells(pts, faces) for i in f})
+    cell_pts = pts[used]
+    allraw = np.vstack([project(cell_pts, s)[0] for s in range(VIEWS)])
+    ref = (REF_W / 2 - MARGIN) / np.abs(allraw[:, 0]).max()
+    scale = DOME_SCALE * ref
+    width = (allraw[:, 0].max() - allraw[:, 0].min()) * scale
+    height = (allraw[:, 1].max() - allraw[:, 1].min()) * scale
+    assert width <= DOME_W - 2 * MARGIN, \
+        f"dome too wide for the box: {width:.1f} px in {DOME_W} (MARGIN {MARGIN})"
+    assert height <= DOME_H - 2 * MARGIN, \
+        f"dome too tall for the box: {height:.1f} px in {DOME_H} (MARGIN {MARGIN})"
     return scale, DOME_W / 2, DOME_H - MARGIN + allraw[:, 1].min() * scale
 
 
@@ -247,17 +308,7 @@ def make_cells(pts, faces):
     movement tables. Cell 0 is the peak pentagon. A cell's centre is the
     normalised mean of its corners. Returns a dict of tables for dome_data."""
     global SHIP_MAX_DEG
-    y0 = math.cos(math.radians(CAP_DEG))
-    cells = []
-    for f in faces:
-        P = pts[list(f)]
-        c = P.mean(axis=0)
-        c /= np.linalg.norm(c)
-        if RIM_DEG is None and (len(f) < 5 or np.any(np.abs(P[:, 1] - y0) < 1e-6)
-                                or math.degrees(math.acos(min(1.0, c[1]))) > CAP_DEG - CELL_RIM_MARGIN_DEG):
-            continue                                             # clipped by / too near the cut
-        cells.append((f, c))
-    cells.sort(key=lambda fc: -fc[1][1])                         # peak first
+    cells = whole_cells(pts, faces)
     assert len(cells[0][0]) == 5 and cells[0][1][1] > 0.999, "cell 0 must be the peak pentagon"
     centres = [c for _, c in cells]
     theta = [math.acos(min(1.0, c[1])) for c in centres]

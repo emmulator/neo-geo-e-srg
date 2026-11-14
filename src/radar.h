@@ -28,16 +28,18 @@
 #ifndef ESRG_RADAR_H
 #define ESRG_RADAR_H
 #include <ngdevkit/types.h>
-#include "dome.h"                /* DOME_Y: RADAR_CY = DOME_Y + 112 */
+#include "dome.h"                /* (RADAR_CY no longer follows DOME_Y) */
 #include "missiles.h"            /* mis_t, mis_obj_t, NMIS */
 #include "ship.h"                /* ship_t */
 
 /* ---- the radar's constants (screen px) — the user's tuning block ---- */
 #define RADAR_CX      38              /* the ellipse's centre */
-#define RADAR_CY      (DOME_Y + 112)      /* the ellipse's centre: the radar
-                                           * keeps its place beside the dome's
-                                           * rim (DOME_Y + 112), so lifting
-                                           * the dome lifts the radar with it */
+#define RADAR_CY      206             /* the ellipse's centre (dome-scenery
+                                       * Task 8: 22 px down onto the console's
+                                       * left wing). Its disc's bottom,
+                                       * 206 + 8.4, ends on y 215 with the
+                                       * lives and the score (fix row 28),
+                                       * on one bottom line. */
 #define RADAR_RX      30              /* x radius */
 #define RADAR_RY      84              /* y radius 8.4 px = RX * 0.28 (the
                                        * Vectrex's RADAR_FLAT), in tenths */

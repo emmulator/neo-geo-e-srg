@@ -6,9 +6,12 @@ import os
 import re
 import sys
 
+import numpy as np
+
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import gen_missiles as gm  # noqa: E402
+import geometry as g  # noqa: E402
 
 V = json.load(open(os.path.join(ROOT, "tools", "vectrex_missiles.json")))
 H = open(os.path.join(ROOT, "build", "missiles_tables.h")).read()
@@ -70,3 +73,47 @@ def test_projection_tables():
     assert all(r[0] == 4096 for r in rows)               # nothing hides a missile over the front
     assert all(x >= 4096 for x in occ)                   # (never below the surface)
     assert all(rows[k][120] > 4096 for k in range(4, 12))   # the dome hides the back
+
+
+def test_task_2_launch_radius_and_launch_points():
+    """Dome-scenery Task 2 proof 3: missiles still launch where the Vectrex
+    launches them, at radius 6.0 (RADAR_RANGE), unchanged. At the new 2/3
+    scale some rings' launch points are on screen and some are not; the
+    launch and the flight are NOT changed to hide that. State it for each
+    ring here (on screen = on the 320x224 screen with the dome box's
+    position and an 8 px margin, as the runtime's cull uses)."""
+    assert gm.RADAR_RANGE == 6.0
+    assert define("BUL_LIFE_FAR") == math.ceil((6.0 * V["r_unit"] - define("BUL_R0"))
+                                               / define("BUL_DR"))
+    import layout  # noqa: F401  (checks the header still parses)
+    f = g.fit()
+    th = gm.tables()["th"]
+    # vectorised (the test must stay fast): the launch points of every ring
+    # at every azimuth, projected exactly, then tested against the screen
+    # with gm.on_screen's 8 px margin. The camera and projection constants
+    # are gm's own, so this is the same arithmetic without the loop.
+    pos, fwd, right, up = g.camera()
+    j = np.arange(g.STEPS)
+    a = 2 * np.pi * j / g.STEPS
+    scale, ox, oy = f
+
+    def screen(t):
+        x = np.sin(t) * np.sin(a)
+        y = np.cos(t)
+        z = np.sin(t) * np.cos(a)
+        p = gm.RADAR_RANGE * np.stack(np.broadcast_arrays(x, y, z), 1)
+        d = p - pos
+        depth = d @ fwd
+        sx = ox + scale * (d @ right) / depth
+        sy = oy - scale * (d @ up) / depth
+        m = 8
+        return ((depth >= gm.ZMIN)
+                & (-m <= gm.DOME_X + sx) & (gm.DOME_X + sx <= gm.SCREEN_W + m)
+                & (-m <= gm.DOME_Y + sy) & (gm.DOME_Y + sy <= gm.SCREEN_H + m))
+
+    on = [k for k, t in enumerate(th) if screen(t).any()]
+    # the rings whose launch point is on screen at some azimuth at 2/3;
+    # the higher rings are the ones nearest the camera, so they come first
+    assert on == [7, 8, 9, 10, 11], on
+    for k in range(len(th)):
+        assert screen(th[k]).any() == (k in on), k

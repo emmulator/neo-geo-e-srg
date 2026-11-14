@@ -82,6 +82,7 @@ local n, in_cart, rec = 0, 0, 0
 local death = nil          -- cart frame of the first death
 local was_alive = 1        -- the last-seen alive flag (for the edges)
 local dumped_start, dumped_after = false, false
+local respawn_pending = false   -- the next frame is the first shown respawn
 
 -- the cart's frame counter (0 until the first main-loop frame)
 local function framecnt()
@@ -165,6 +166,12 @@ local function tick()
             f:write(string.format("D %d %d %d\n", fc, death, rcnow))
         end
         local respawned = death ~= nil and was_alive == 0 and rcnow == 1
+        if respawned then
+            -- the ship_gfx_prepare's SCB1/SCB3 commit is one vblank behind
+            -- the state (Task S2), so the frame whose slots show the
+            -- respawned ship is the one AFTER the RC flag rises.
+            respawn_pending = true
+        end
         -- the start-of-game truth, taken before the first launch arrives
         if not dumped_start and fc == 45 then
             dump("C", fc, death, rcnow)
@@ -189,9 +196,10 @@ local function tick()
                 machine.video:snapshot()
                 f:write(string.format("S2 %d\n", fc))
             end
-        elseif not dumped_after and respawned then
+        elseif not dumped_after and respawn_pending and not respawned then
             dump("X", fc, death, rcnow)
             dumped_after = true
+            respawn_pending = false
             machine.video:snapshot()       -- the second snapshot
             f:write(string.format("S2 %d\n", fc))
         end

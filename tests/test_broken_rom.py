@@ -115,7 +115,8 @@ def test_every_stone_matches_the_sheet():
         want = _expected_stone(cell, v, r, c)
         if not np.array_equal(got, want):
             mismatches.append((cell, v, r, c, tile))
-    assert total > 7000, f"only {total} stones checked — the dump is incomplete"
+    assert total > 0.85 * rb.N_TILES, (
+        f"only {total} stones checked of {rb.N_TILES} — the dump is incomplete")
     if mismatches:
         raise AssertionError(
             f"{len(mismatches)} stone mismatches of {total} (first: "
@@ -132,5 +133,8 @@ def test_sheet_has_no_large_blank_tails():
     tiling needs (a picture's last half-used stone rows/cols are still
     materialised as full tiles)."""
     ntiles = rb.N_TILES          # the generator's own packed tile count
-    assert ntiles < 10000, f"sheet still has {ntiles} tile places"
-    assert ntiles >= 7909, f"packed sheet reports {ntiles}, fewer than the used stones"
+    used = sum(o[0] * o[1] for c in range(76) for o in
+               (rb.overlay(c, v) for v in range(rb.g.VIEWS)) if o)
+    assert ntiles == used, f"packed sheet has {ntiles} places for {used} stones"
+    # the sheet is packed tightly, NOT the old layout's 20,735 padded places
+    assert ntiles < 0.6 * 20735, f"sheet still has {ntiles} tile places"

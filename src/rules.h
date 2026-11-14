@@ -116,8 +116,8 @@ u8 collapse_state(const rules_t *r);
                                   * (the Vectrex zeroes the effects, so 0/1 are
                                   * merged as "1: the dome is not collapsing") */
 u8 collapse_frac(const rules_t *r);  /* f = DEAD_FRAMES - dead_t (0 on the death, 0 when off) */
-u8 collapse_shake(const rules_t *r); /* px of jitter: 3, 7, 15, 31 ramping, 31 in the fall */
-u8 collapse_burst(const rules_t *r); /* px the runs spread apart: g * 3, g = f - COLLAPSE_SHAKE */
-u8 collapse_fall(const rules_t *r);  /* px the whole dome sinks: the Vectrex's sum of g>>3, cap 120 */
+u8 collapse_shake(const rules_t *r); /* px of jitter: 2, 5, 10, 21 ramping, 21 in the fall */
+u8 collapse_burst(const rules_t *r); /* px the runs spread apart: g * 2, g = f - COLLAPSE_SHAKE */
+u8 collapse_fall(const rules_t *r);  /* px the whole dome sinks: the Vectrex's sum of g>>3, cap 80 */
 u8 collapse_dim(const rules_t *r);   /* the palette fade over the fall: 0..COLLAPSE_MAX_DIM */
 #endif

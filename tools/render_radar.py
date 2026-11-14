@@ -11,14 +11,21 @@ Three sorts of picture are pre-rendered as 16x16 C ROM tiles:
   FRAME — one static picture, 4 x 2 tiles (64 x 32 px), centred on
       (CX, CY): a 1-px ellipse of radii (RX, RY) plus the Vectrex's roof
       (tools/gen_dome.py radar_frame, scaled to px): the roof's half-width
-      is RX/6 * sin(rim), its rim height H/6 * cos(rim) (rim = the dome's
-      RIM_DEG 63.5), its peak H/6. Colour index 1, in its own palette (the
-      blink writes one palette entry: dim (40,120,165) / bright
-      (175,228,245) — the dome's glow ramp colours, the radar's palette).
+      is RX/6 * sin(rim), its rim height H/6 * cos(rim) (rim =
+      geometry.py's RADAR_RIM_DEG 63.5, kept apart from the dome picture's
+      flat cut), its peak H/6. Colour index 1, in its own palette (the
+      blink writes one palette entry: dim / bright amber, RADAR_DIM_RGB /
+      RADAR_BRIGHT_RGB). frame_bitmap() is these lines alone (what the
+      geometry tests prove); the C ROM gets frame_picture(): the same lines
+      on index 1 over an Elite Dangerous-style scanner disc — a dark amber
+      fill (2), two range rings and a cross (3), a dark bezel just outside
+      the rim (4) — so only the lines blink.
 
   STICKS — per height 0..32 px, a 1-px vertical line (2 px wide locked) in
       a 1-tile-wide, 3-tile-tall (48 px) sprite, ending at the picture's
-      BOTTOM row, in colour index 1. The sprite is placed so the line's
+      BOTTOM row, in colour index 1 — of the STICKS' own bank (the
+      header's radar_stick_pal: index 1 red-orange, steady; the lock-on
+      blink is the frame bank's alone). The sprite is placed so the line's
       foot is at (sx, sy), the spot; the picture is 48 px tall so a
       32-px stick plus the ellipse's lower half fits above the bottom row.
 
@@ -53,7 +60,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import geometry as g  # noqa: E402
-import render_broken as rb  # noqa: E402  (TILE_BASE + N_TILES: where the stars start)
+import render_broken as rb  # noqa: E402  (TILE_BASE + N_TILES: where the radar starts)
 
 TILE = 16                       # C ROM tile size, px
 STICK_H = 48                    # the stick pictures are 3 tiles tall
@@ -65,9 +72,10 @@ DX_N = HEAD_MAX + 1
 # the palette's colour index 1 is the drawn colour (index 0 transparent):
 PIX = 1                         # the stick and heading line colour index
 
-# the C ROM position: exactly one tile after the star tile (the Makefile
-# emits the radar parts after the stars').
-_FRAME_TILE_BASE = rb.TILE_BASE + rb.N_TILES + 1   # = 19138
+# the C ROM position: the radar's pictures are the LAST parts of the C ROM,
+# right after the broken-window sheet (dome-scenery Task 4 removed the star
+# tile that used to sit between them).
+_FRAME_TILE_BASE = rb.TILE_BASE + rb.N_TILES
 
 # the radar's constants, read from src/radar.h (the one tuning block)
 _HDR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
@@ -80,19 +88,22 @@ def radar_h_defs():
         m = re.search(r"#define\s+%s\s+(.+)$" % name, txt, re.M)
         assert m, f"{name} missing from src/radar.h"
         value = m.group(1).split("/*")[0].strip()
-        if "DOME_Y" in value:                # RADAR_CY = DOME_Y + 112: follow
+        if "DOME_Y" in value:                # (RADAR_CY is the literal 206 now;
+                                             # the expression path still works)
             dome = open(os.path.join(os.path.dirname(_HDR), "dome.h")).read()
             dy = int(re.search(r"#define\s+DOME_Y\s+(\d+)", dome).group(1))
             value = value.replace("DOME_Y", str(dy))
-        out[name] = eval(value)              # a plain int, or DOME_Y + 112
+        out[name] = eval(value)              # a plain int (206), or an expression
     return out
 
 # the roof's geometry (gen_dome.py radar_frame): the dome cut at the
-# camera-facing rim RIM_DEG, its picture scaled so the radar's ellipse edge
+# camera-facing rim, its picture scaled so the radar's ellipse edge
 # (RADAR_RANGE = 6.0 radii) holds the rim: half-width RX/6 * sin(rim), rim
-# height H/6 * cos(rim), peak H/6.
+# height H/6 * cos(rim), peak H/6. The radar's roof rim is the Vectrex's
+# camera-facing rim (63.5 deg), the same as before: the dome picture's flat
+# cut (Dome-scenery Task 3) does not move the radar.
 RADAR_RANGE = 6.0
-RIM = math.radians(g.RIM_DEG)
+RIM = math.radians(g.RADAR_RIM_DEG)
 
 
 def roof(d):
@@ -104,7 +115,7 @@ def roof(d):
 
 
 def rgb_to_neo15(rgb):
-    """ngdevkit paltool's rgb24_to_packed15 (as render_stars.py)."""
+    """ngdevkit paltool's rgb24_to_packed15 (as render_missiles.py)."""
     r, gg, b = [c >> 2 for c in rgb]
     dark = 1 if ((r & 1) + (gg & 1) + (b & 1)) == 0 else 0
     r, gg, b = r >> 1, gg >> 1, b >> 1
@@ -152,6 +163,49 @@ def frame_bitmap():
             xx, yy = px - x0, py - y0
             if 0 <= xx < w and 0 <= yy < h:
                 img[yy, xx] = PIX
+    return img
+
+
+# the scanner's colours (Elite Dangerous amber), the frame bank. Index 1
+# blinks (the lock-on): dim, then bright; 2..4 are steady.
+RADAR_DIM_RGB = (214, 104, 18)          # 1: the rim and roof, dim
+RADAR_BRIGHT_RGB = (255, 196, 84)       # 1: the rim and roof, bright
+RADAR_FILL_RGB = (36, 17, 3)            # 2: the disc
+RADAR_RING_RGB = (150, 72, 12)          # 3: the range rings and the cross
+RADAR_BEZEL_RGB = (8, 6, 4)             # 4: the bezel outside the rim
+RADAR_STICK_RGB = (255, 74, 34)         # the sticks' bank, index 1
+RING_RADII = (0.36, 0.68)               # the range rings, x the rim
+
+
+def frame_picture():
+    """the frame as the C ROM holds it (64 x 32 indices, same canvas as
+    frame_bitmap): frame_bitmap's lines on index 1 over the scanner disc.
+    Nothing is drawn over a line pixel, and the disc's indices never
+    touch index 1, so the lock-on blink still lights exactly the lines."""
+    d = radar_h_defs()
+    cx, cy = d["RADAR_CX"], d["RADAR_CY"]
+    rx, ry = d["RADAR_RX"], d["RADAR_RY"] / 10.0
+    lines = frame_bitmap()
+    h, w = lines.shape
+    x0, y0 = cx - w // 2, cy - h // 2
+    yy, xx = np.mgrid[0:h, 0:w]
+    ex = (xx + x0 - cx) / rx
+    ey = (yy + y0 - cy) / ry
+    r = np.sqrt(ex * ex + ey * ey)
+    img = np.zeros((h, w), np.uint8)
+    img[(r > 1.0) & (r <= 1.0 + 1.6 / ry)] = 4          # the bezel
+    img[r <= 1.0] = 2                                    # the disc
+    for k in RING_RADII:                                 # the range rings
+        for t in np.linspace(0, 2 * math.pi, 720):
+            px = int(round(cx + k * rx * math.cos(t))) - x0
+            py = int(round(cy + k * ry * math.sin(t))) - y0
+            img[py, px] = 3
+    for x in range(int(cx - rx + 2), int(cx + rx - 1)):  # the cross: dotted
+        if x % 2 == 0:                                   # horizontal ...
+            img[cy - y0, x - x0] = 3
+    for y in range(int(cy - ry + 1), int(cy + ry)):      # ... solid vertical
+        img[y - y0, cx - x0] = 3
+    img[lines == PIX] = PIX                              # the lines on top
     return img
 
 
@@ -305,8 +359,8 @@ assert len(HEADING_TILES) == 2 * DX_N * DX_N
 # ---- C ROM tiles ---------------------------------------------------------
 
 def encode_tile(img):
-    """one 16x16 tile's c1/c2 bytes (the same order render_broken.py and
-    render_stars.py use: 8x8 sub-tiles at file offsets 8, 136, 0, 128, each
+    """one 16x16 tile's c1/c2 bytes (the same order render_broken.py
+    uses: 8x8 sub-tiles at file offsets 8, 136, 0, 128, each
     row two bytes, LSB-first). Returns (c1_bytes, c2_bytes)."""
     assert img.shape == (TILE, TILE), img.shape
     c1 = bytearray(64)
@@ -419,8 +473,12 @@ def main():
     assert len(heads) == 2 * DX_N * DX_N
 
     # ---- the header ----
-    pal_dim = rgb_to_neo15((40, 120, 165))
-    pal_bright = rgb_to_neo15((175, 228, 245))
+    pal_dim = rgb_to_neo15(RADAR_DIM_RGB)
+    pal_bright = rgb_to_neo15(RADAR_BRIGHT_RGB)
+    pal_rest = [rgb_to_neo15(c) for c in (RADAR_FILL_RGB, RADAR_RING_RGB, RADAR_BEZEL_RGB)]
+    pal_stick = rgb_to_neo15(RADAR_STICK_RGB)
+    picture = frame_picture()
+    assert np.array_equal(picture == PIX, frame == PIX)   # only the lines blink
     with open(args.header, "w") as hf:
         w = hf.write
         w("/* generated by tools/render_radar.py: do not edit */\n"
@@ -434,14 +492,15 @@ def main():
         w(f"#define RADAR_STICK_H {STICK_H}      /* px: the stick pictures "
           f"are {STICK_H_TILES} tiles tall */\n")
         w(f"/* C ROM tile bases: the radar's pictures are the LAST parts of "
-          f"the C ROM,\n   after the broken-window sheet AND the star tile "
-          f"(STAR_TILE_BASE = 19137,\n   render_stars). Frame = 19138, "
-          f"sticks = 19138+8 = 19146, headings =\n   19146+66*3 = 19344 "
-          f"(each of the 66 stick pictures is\n   {STICK_H_TILES} tiles "
-          f"tall, so the sticks occupy 66*{STICK_H_TILES} = "
+          f"the C ROM,\n   right after the broken-window sheet (dome-scenery "
+          f"Task 4 retired\n   the star tile that used to sit between them). "
+          f"Frame = that, sticks =\n   frame + {n_frame}, headings =\n   "
+          f"sticks + {2 * H_N * STICK_H_TILES} "
+          f"(each of the {2 * H_N} stick pictures is\n   {STICK_H_TILES} tiles "
+          f"tall, so the sticks occupy {2 * H_N}*{STICK_H_TILES} = "
           f"{2 * H_N * STICK_H_TILES} tile-slots):\n   2 x (17 x 17) = 578 "
           f"heading tiles. The Makefile\n   emits the parts in this order "
-          f"(frame, sticks, headings) right after\n   stars.c1/c2, so the "
+          f"(frame, sticks, headings) right after\n   broken.c1/c2, so the "
           f"tile at each number is exactly the picture's tile. */\n")
         w(f"#define RADAR_FRAME_TILE_BASE {_FRAME_TILE_BASE}\n")
         w(f"#define RADAR_STICK_TILE_BASE (RADAR_FRAME_TILE_BASE + "
@@ -452,18 +511,22 @@ def main():
           f"{2 * H_N * STICK_H_TILES}) */\n")
         w(f"#define RADAR_HEAD_TILE_BASE (RADAR_STICK_TILE_BASE + "
           f"RADAR_STICK_TILE_SLOTS)\n")
-        w(f"/* the frame's palette bank: entry 1 = the ellipse/roof colour —\n"
-          f"   dim (40,120,165), bright (175,228,245); the lock-on blink "
-          f"writes\n   exactly this one entry. The sticks and headings share "
-          f"it. */\n")
-        w("static const u16 radar_pal[16] = {0x8000, 0x%04x};\n" % pal_dim)
+        w(f"/* the frame's palette bank: entry 1 = the rim/roof colour —\n"
+          f"   dim {RADAR_DIM_RGB}, bright {RADAR_BRIGHT_RGB}; the lock-on "
+          f"blink writes\n   exactly this one entry. 2 the disc, 3 the rings "
+          f"and cross, 4 the bezel\n   (steady). */\n")
+        w("static const u16 radar_pal[16] = {0x8000, 0x%04x, 0x%04x, 0x%04x, 0x%04x};\n"
+          % (pal_dim, *pal_rest))
+        w(f"/* the sticks' and headings' own bank: entry 1 = {RADAR_STICK_RGB}, "
+          f"steady */\n")
+        w("static const u16 radar_stick_pal[16] = {0x8000, 0x%04x};\n" % pal_stick)
         w("/* the bright colour (the lock-on blink's palette entry) */\n")
         w("static const u16 radar_pal_bright = 0x%04x;\n" % pal_bright)
         w("#endif\n")
 
     # ---- the payload files ----
     if args.frame_c1 and args.frame_c2:
-        pack_tiles([frame[r * TILE:(r + 1) * TILE, c * TILE:(c + 1) * TILE]
+        pack_tiles([picture[r * TILE:(r + 1) * TILE, c * TILE:(c + 1) * TILE]
                     for r in range(2) for c in range(4)],
                    args.frame_c1, args.frame_c2)
     if args.stick_c1 and args.stick_c2:

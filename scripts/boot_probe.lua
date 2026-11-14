@@ -13,7 +13,9 @@
 local machine = manager.machine
 local cpu = machine.devices[":maincpu"]
 local frames = tonumber(os.getenv("FRAMES") or "900")
-local hold = os.getenv("HOLD")
+-- the leg list's VAR=value has no spaces, so the port field's name
+-- (e.g. "P1 Up") is written with underscores and mapped back here.
+local hold = (os.getenv("HOLD") or ""):gsub("_", " ")
 local out = os.getenv("OUT")
 local START_DELAY = 126
 local hold_at = 120 + START_DELAY

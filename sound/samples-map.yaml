@@ -1,9 +1,13 @@
-# The five Vectrex sound effects as ADPCM-A samples (M7 Task 1).
+# The cart's sound effects as ADPCM-A samples: move/jump/fire/hit/crack
+# from tools/synth_sfx.py, the lock-on pip still from tools/render_sfx.py
+# (R1), and the initials picker's tick/type/bell/backspace from
+# tools/synth_sfx.py (the orchestrator's 2380ef9; K1).
 #
 # Each entry references one resampled WAV; vromtool.py allocates every
 # sample a slot in the 524288-byte V ROM and emits build/samples.inc, the
-# ASM defines (FIRE_START_LSB ... PIP_STOP_MSB) that sound/user_commands.s
-# includes.
+# ASM defines (FIRE_START_LSB ... BACKSPACE_STOP_MSB) that
+# sound/user_commands.s includes. The picker's four are appended after the
+# old six, so no old sample's offset moves.
 - adpcm_a:
     name: fire
     uri: file://build/sfx/fire.wav
@@ -17,5 +21,20 @@
     name: crack
     uri: file://build/sfx/crack.wav
 - adpcm_a:
+    name: move
+    uri: file://build/sfx/move.wav
+- adpcm_a:
     name: pip
     uri: file://build/sfx/pip.wav
+- adpcm_a:
+    name: tick
+    uri: file://build/sfx/tick.wav
+- adpcm_a:
+    name: type
+    uri: file://build/sfx/type.wav
+- adpcm_a:
+    name: bell
+    uri: file://build/sfx/bell.wav
+- adpcm_a:
+    name: backspace
+    uri: file://build/sfx/backspace.wav

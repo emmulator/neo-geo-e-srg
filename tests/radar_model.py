@@ -8,11 +8,14 @@ exactly on every frame of the long seeded games.
 The radar's constants (the task's block; the user tunes these in
 src/radar.h — this module is the REFERENCE, so it states them itself and
 tests/test_radar.py proves the C's header still says the same — except
-RADAR_CY, which is defined in terms of the dome: DOME_Y + 112, read from
-src/dome.h through tests/layout.py so the radar keeps its place beside
-the dome's rim when the dome moves):
+RADAR_CY, read from src/radar.h through tests/layout.py. It was DOME_Y +
+112 at the full dome; Dome-scenery Task 2 made it the literal 184; Task 8
+moved it 22 px down to 206, onto the console's left wing, so its disc's
+bottom (206 + 8.4) ends on y 215 with the lives and the score on fix row
+28. The radar now covers the 157..214 band):
 
-    CX, CY = 38, 184      the ellipse's centre (px; CY = DOME_Y + 112)
+    CX, CY = 38, 206      the ellipse's centre (px; CY 206, no longer
+                          DOME_Y + 112)
     RX     = 30           x radius (px)
     RY     = 8.4          y radius (px): RX * 0.28, the Vectrex's RADAR_FLAT
     H      = 30           stick height for R = 6.0 radii straight up (px)
@@ -56,7 +59,7 @@ NMIS = V["nmis"]
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import layout as _lay  # noqa: E402
-CX, CY = 38, _lay.d.RADAR_CY    # CY = DOME_Y + 112 (src/dome.h -> radar.h)
+CX, CY = 38, _lay.d.RADAR_CY    # CY 206 (src/radar.h; Task 8)
 RX, RY = 30, 8.4
 H, H_POW = 30, 2
 RANGE = 6.0

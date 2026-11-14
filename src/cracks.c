@@ -32,6 +32,15 @@
  * come after; see the header's constraint record) */
 #define BROKEN_SLOTS ((u16)(BROKEN_SLOT_AFTER - BROKEN_SLOT_BASE))
 
+/* Task C2: while a dome death's collapse runs (and under the dome death's
+ * GAME OVER) the collapse owns the overlay range: the fireball, fragments,
+ * smoke and puffs live there, so the range is hidden ONCE on the first such
+ * frame and then left alone until the dome is whole again. The next whole
+ * frame's normal draw rewrites the range, its tail hidden, as before. The
+ * flag is reset by cracks_init / cracks_show_empty (the title hides the
+ * range every frame) and by every whole frame. */
+static u8 collapse_owned;
+
 /* clear a run of overlay slots: SCB3 = 0 (height 0: not drawn) */
 static void hides(u16 slot, u8 n)
 {
@@ -49,11 +58,13 @@ void cracks_init(void)
         MMAP_PALBANK1[PAL_BROKEN * 16 + i] = broken_pal[i];
     MMAP_PALBANK1[PAL_BROKEN * 16] = 0x8000;
     hides(BROKEN_SLOT_BASE, (u8)BROKEN_SLOTS);
+    collapse_owned = 0;
 }
 
 void cracks_show_empty(void)
 {
     hides(BROKEN_SLOT_BASE, (u8)BROKEN_SLOTS);
+    collapse_owned = 0;
 }
 
 /* the pure half: what cell's overlay at dome view `view` (0..47) must
@@ -87,7 +98,7 @@ static void draw(u16 slot0, const broken_place_t *pl)
     u8 r, c;
     u16 attr = (u16)(PAL_BROKEN << 8);
     s16 sy = (s16)(DOME_Y + pl->y);   /* the tables' canvas x/y are in the
-                                          * dome box (176x128 px, dome.h's
+                                          * dome box (128x96 px, dome.h's
                                           * DOME_X/DOME_Y at its top-left) */
     s16 sx = (s16)(DOME_X + pl->x);
 
@@ -146,14 +157,22 @@ void cracks_show(const rules_t *r, u8 dome_angle)
     view = (u8)(dome_angle % BROKEN_VIEWS);
     q = (u8)(dome_angle / BROKEN_VIEWS);
 
-    /* the collapse hides the overlays (whole = !dome_dead || !dead_t), and
-     * a game-ending dome death's GAME OVER keeps them hidden (Task 4's
-     * fix: the rules never respawn, so the broken list stays full — the
-     * overlays must not redraw the dome's broken cells under GAME OVER) */
+    /* the collapse owns the overlay range from its first frame (the dome
+     * death, f 0) on, and a game-ending dome death's GAME OVER keeps it
+     * hidden (Task 4's fix: the rules never respawn, so the broken list
+     * stays full — the overlays must not redraw the dome's broken cells
+     * under GAME OVER). Task C2: hide the range ONCE, on the first such
+     * frame, then leave it alone until the dome is whole again; the
+     * collapse's fireball, fragments, smoke and puffs are written there. */
     if (dome_draw_gone(r) || (r->dome_dead && r->dead_t)) {
-        hides(BROKEN_SLOT_BASE, (u8)BROKEN_SLOTS);
+        if (!collapse_owned) {
+            hides(BROKEN_SLOT_BASE, (u8)BROKEN_SLOTS);
+            collapse_owned = 1;
+        }
         return;
     }
+    collapse_owned = 0;                 /* the dome is whole: the range is
+                                         * the overlays' again */
     for (i = 0; i < r->nbroken && i < 38; i++) {
         u8 cell = r->broken[i];
         u8 art = permute(cell, q);

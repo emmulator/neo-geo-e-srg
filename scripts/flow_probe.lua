@@ -69,7 +69,7 @@
 -- (1: press A at GAME OVER and prove it does nothing on MVS) and
 -- FLOW_RULES_ADDR (the static `rules`, for the lives/game_over reads).
 -- M6 Task 6 env: FLOW_PAGES (1: the no-Start page-turn run, AES with the
--- title from ~frame 477 to the 8->0 wrap at ~3132: FRAMES must be >= 3200),
+-- title from ~frame 24 to the 10->0 wrap at ~3269: FRAMES must be >= 3400),
 -- FLOW_PAGES_C (1: an MVS run that taps C at MVS_C_FRAMES (450) and
 -- MVS_C_FRAMES+100 (550) to prove the manual page turn), MVS_C_FRAMES (the
 -- first C tap), FLOW_PAGE_ADDR / FLOW_T_ADDR / FLOW_ENTRY_ADDR (the cart's
@@ -84,22 +84,28 @@
 -- nm; 0 disables the L records), FLOW_RULES_ADDR (the static `rules`, for
 -- rules.level @ +0) and FLOW_MIS_ADDR (the static `mis`, for mis.level
 -- @ +73).
--- M6 Task 9 env: FLOW_BEST (1: the best-mvs mode's game leg — the MVS run
--- that plays the centred game to GAME OVER and records mis.score10 / the
--- flow_best backups), FLOW_BEST_ADDR (the cart's flow_best backup-RAM
--- table, from nm; 0 disables the B records), FLOW_MIS_ADDR (also the
--- score10 read: mis + 76, the m68k layout checked against the ELF's
--- DWARF), FLOW_BEST_RETURN (1: the AES flow leg, in which the probe reads
--- and records the best table on the returned title so the checker can
--- prove the Up-held game's score landed in NORMAL).
+-- high-score boards Task B2 env: FLOW_BEST (1: the best-mvs mode's game
+-- leg — the MVS run that plays the aiming game to GAME OVER and records
+-- mis.score10 / the flow_board backups), FLOW_BEST_ADDR (the cart's
+-- flow_board backup-RAM board, from nm; 0 disables the B records),
+-- FLOW_MIS_ADDR (also the score10 read: mis + 76, the m68k layout checked
+-- against the ELF's DWARF), FLOW_BEST_RETURN (1: the AES flow leg, in
+-- which the probe reads and records the board on the returned title so
+-- the checker can prove the game's qualifying entry landed in NORMAL),
+-- FLOW_SHIP_ADDR (the static ship, for ship.cell @ +2) and
+-- FLOW_CELL_RING_ADDR / FLOW_CELL_PHI_ADDR (the ROM tables
+-- mis_cell_ring / mis_cell_phi: the aim policy fires only when a missile
+-- is on the ship's cell's ring and azimuth, so a moving ship conserves
+-- the two bullet slots).
 -- M6 Task 10 env: FLOW_BEST_AES (1: the best-aes mode's game leg — the
--- AES run that plays the centred game to GAME OVER and records
--- mis.score10 and the card-log answers (the cart's card_save_best calls:
+-- AES run that plays the aiming game to GAME OVER and records
+-- mis.score10 and the card-log answers (the cart's card_save_board calls:
 -- on a fresh card 0x81 then FORMAT 0 then SAVE 0), then the post-return
 -- title rows), FLOW_CARDLOG_ADDR (the cart's card_log BSS words, from
 -- nm; 0 disables the A records), and BEST_NOCARD (1: an AES run with no
--- -memcard — the load answers 0x80, the title's row 7 reads "0", and a
--- game to GAME OVER still keeps the score in backup RAM for that run).
+-- -memcard — the load answers 0x80, the title's first page-0 frame reads
+-- the default board's NORMAL top entry, and a game to GAME OVER still
+-- keeps the board in backup RAM for that run).
 local machine = manager.machine
 local cpu = machine.devices[":maincpu"]
 local sp = cpu.spaces["program"]
@@ -133,15 +139,29 @@ local return_run = os.getenv("FLOW_RETURN") == "1"
 local level_addr = tonumber(os.getenv("FLOW_LEVEL_ADDR") or "0")
 local rules_addr2 = tonumber(os.getenv("FLOW_RULES_ADDR") or "0")
 local mis_addr = tonumber(os.getenv("FLOW_MIS_ADDR") or "0")
--- M6 Task 9: the best-table records (B lines) and the MVS best-mode run
+-- high-score boards Task B2: the board records (B lines) and the MVS
+-- best-mode run
 local best_run = os.getenv("FLOW_BEST") == "1"
 local best_return = os.getenv("FLOW_BEST_RETURN") == "1"
 local best_addr = tonumber(os.getenv("FLOW_BEST_ADDR") or "0")
+local ship_addr = tonumber(os.getenv("FLOW_SHIP_ADDR") or "0")
+local cell_ring_addr = tonumber(os.getenv("FLOW_CELL_RING_ADDR") or "0")
+local cell_phi_addr = tonumber(os.getenv("FLOW_CELL_PHI_ADDR") or "0")
 -- M6 Task 10: the AES best-mode run (FLOW_BEST_AES) and the card-log
 -- reads (A lines: the answers the cart's card calls left in card_log)
 local best_aes_run = os.getenv("FLOW_BEST_AES") == "1"
 local no_card = os.getenv("BEST_NOCARD") == "1"
 local cardlog_addr = tonumber(os.getenv("FLOW_CARDLOG_ADDR") or "0")
+-- high-score boards Task B6: the best legs' game now enters the initials
+-- entry screen after 118 GAME OVER frames. Finish it with no initials (walk
+-- back to END and press A, storing three spaces) so B2's board proofs keep
+-- their three-space expectation, and skip the F/B samples on the returned
+-- title's hidden blink frames (the entry leg proves the blink itself).
+local entry_finish = os.getenv("FLOW_ENTRY_FINISH") == "1"
+local flow_state_addr = tonumber(os.getenv("FLOW_STATE_ADDR") or "0")
+local entry_state_addr = tonumber(os.getenv("ENTRY_STATE_ADDR") or "0")
+local blink_active_addr = tonumber(os.getenv("FLOW_BLINK_ACTIVE_ADDR") or "0")
+local ef_state = 0
 local SG = dofile((os.getenv("REPO") or ".") .. "/scripts/start_game.lua")
 local MS = dofile((os.getenv("REPO") or ".") .. "/scripts/mis_seed.lua")
 local MI = dofile((os.getenv("REPO") or ".") .. "/scripts/mvs_input.lua")
@@ -158,6 +178,7 @@ local DOME0, DOME_COLS = S.DOME_SPRITE, S.DOME_COUNT
 local f = assert(io.open(out, "w"))
 local n, in_cart, rec = 0, 0, 0
 local p1_go, mvs_go, mvs_go_n, snap_taken = nil, nil, nil, false
+local go_snap_fc, go_snap_done = nil, false
 local a_pressed = false
 -- M6 Task 10: the best-aes leg's card-log sampler (every frame during
 -- the GAME OVER window — the BIOS card calls span several MAME frames —
@@ -167,7 +188,8 @@ local next_aes_nrs = 0
 -- M6 Task 7: the level-select run's B taps and the Start press. B is held
 -- for one MAME frame on 1000/1100/1200/1300 (bios_p1change latches it),
 -- then Start on 1400..1404 (the flow probe's SG override). The returned
--- title of the return run is page 1, so the Start press that follows only
+-- title of the return run is page 2 (NORMAL's board), so the Start press
+-- that follows only
 -- happens in the level run.
 local lvl_next_tap = 0
 local lvl_taps = { [1000] = true, [1100] = true, [1200] = true, [1300] = true }
@@ -175,12 +197,19 @@ local lvl_taps = { [1000] = true, [1100] = true, [1200] = true, [1300] = true }
 local next_nrs = 0
 -- the M6 Task 6 legs' per-page first-frame and next-turn bookkeeping: the
 -- checker keys the page PINs and the C taps on these MAME frames
--- (pages_run: title_page's first 1 / first 2 / first 8 / first 0-after-8;
+-- (pages_run: title_page's first 1 / first 2 / first 10 / first 0-after-10;
 -- pages_c_run: each C tap's new-page title frame). dome_frame holds the
 -- MAME frame the last C-block dome dump was taken at, so the checker can
 -- compare two page-0 dump blocks by their event.
 local page_pin, next_turn = {}, nil
 local dome_wrapped
+-- attract Task A1: a page PIN's C block/snapshot is taken a couple of
+-- frames after the pin, not on it. MAME's snapshot at frame n shows frame
+-- n-1's display, while the FIXMAP read at frame n is already the new
+-- page's; the title's pixel proof needs the snapshot and the rows to be
+-- the same page (page 0's prompt is still PRESS START at t 2, and a text
+-- page's rows do not depend on t).
+local pending_dump
 local dome_frame = 0
 local dome_snap0, dome_snap1, dome_snap2
 local next_dome_snap, c_tap_next = 0, 0
@@ -209,7 +238,7 @@ local function framecnt()
 end
 
 -- M6 Task 6: the cart's title state, read straight from its BSS (the
--- addresses come from nm, like hud_framecnt). title_page 0..8, title_t
+-- addresses come from nm, like hud_framecnt). title_page 0..10, title_t
 -- the frames spent on this page, credits the value the cart draws row 9
 -- with — the same derivation as src/flow.c's title_credits(): 0 on AES,
 -- 1 on MVS before a coin (flow_entry 0), 2 after a coin (flow_entry 1),
@@ -226,33 +255,105 @@ local function title_state()
     return page, t, cred
 end
 
--- M6 Task 9: the cart's backup-RAM best table (flow_best, 18 bytes from
--- nm: magic u32, score10 u32[3], sum u16, all big-endian), as the three
--- scores plus the raw bytes — the checker rebuilds and validates the
--- table (magic/sum) exactly as src/best.c does, and compares the scores
--- against the drawn rows' best values.
+-- high-score boards Task B2: the cart's backup-RAM board (flow_board, 126
+-- bytes from nm: magic u32 at 0, 3 levels x 5 entries of init[3] + pad +
+-- u32 score10, and u16 sum at 124, all big-endian), as each level's top
+-- entry score10 plus the raw bytes — the checker rebuilds and validates
+-- the board exactly as src/board.c does, and compares the top entries
+-- against the drawn rows' values. Top entry score10 is at +8, +48 and +88
+-- (entry 0's score: 4 + level*40 + 4).
 local function best_rec(n, fc)
     if best_addr == 0 then return end
-    local b0 = sp:read_u32(best_addr + 4)
-    local b1 = sp:read_u32(best_addr + 8)
-    local b2 = sp:read_u32(best_addr + 12)
+    local b0 = sp:read_u32(best_addr + 8)
+    local b1 = sp:read_u32(best_addr + 48)
+    local b2 = sp:read_u32(best_addr + 88)
     local hex = {}
     local i
-    for i = 0, 17 do
+    for i = 0, 125 do
         hex[#hex + 1] = string.format("%02x", sp:read_u8(best_addr + i))
     end
     f:write(string.format("B %d %d %d %d %d %s\n", n, fc, b0, b1, b2,
                           table.concat(hex)))
 end
 
--- M6 Task 10: the card-log pairs — the commands and answers the cart's
--- card calls left in card_log (u16s: command, answer, ... , 0
--- terminated), as <cmd>:<ans> pairs joined by commas. Read from RAM the
--- frame after a save (the cart's GAME OVER update + card calls ran in
--- the cart's frame; the probe reads at the START of the MAME frame, so
--- the answers appear one frame later). The checker keys run 1's fresh
--- card on "2:81" then "0:0" then "3:0" (LOAD 0x81, FORMAT 0, SAVE 0)
--- and run 3's no-card runs on "2:80" ("3:80" for the save).
+-- high-score boards Task B2: the deterministic aiming game the best legs
+-- play (the old fixed Right + A-every-11 policy scores under the board's
+-- default 5th entry). Hold Left and press A only when a flying missile is
+-- on the ship's cell's ring and azimuth: the two bullet slots then exist
+-- exactly when a shot can hit, and the ship turns around the dome while
+-- the missiles come in. The probe reads ship.cell (+2), the ROM tables
+-- mis_cell_ring/mis_cell_phi, and mis.obj[0..2] (14 bytes each: state at
+-- +0, kind at +1, ring at +2, phi at +3; kind 0 = missile). No A at GAME
+-- OVER, so a dead game cannot restart itself.
+local function aim_fire()
+    if ship_addr == 0 or cell_ring_addr == 0 or cell_phi_addr == 0
+       or mis_addr == 0 then
+        return false
+    end
+    if rules_addr ~= 0 and sp:read_u8(rules_addr + 82) ~= 0 then
+        return false
+    end
+    local cell = sp:read_u8(ship_addr + 2)
+    local r = sp:read_u8(cell_ring_addr + cell)
+    local phi = sp:read_u8(cell_phi_addr + cell)
+    local i
+    for i = 0, 2 do
+        local o = mis_addr + i * 14
+        if sp:read_u8(o) == 1 and sp:read_u8(o + 1) == 0
+           and sp:read_u8(o + 2) == r and sp:read_u8(o + 3) == phi then
+            return true
+        end
+    end
+    return false
+end
+
+-- Task B6: drive the entry screen to END with no initials. The ring starts
+-- at A (phase 0); one Left press turns it back to END (position 36, phase
+-- 216, six sub-steps), then A at rest finishes, padding three spaces. On
+-- the best legs this runs only after the GAME OVER (the game input is
+-- released first). Returns true while the cart is in FLOW_ENTRY.
+local function entry_finish_apply()
+    if not entry_finish or flow_state_addr == 0 or entry_state_addr == 0 then
+        return false
+    end
+    if sp:read_u32(flow_state_addr) ~= 3 then
+        return false
+    end
+    local phase = sp:read_u8(entry_state_addr)
+    local target = sp:read_u8(entry_state_addr + 1)
+    local done = sp:read_u8(entry_state_addr + 8)
+    local function set(name, v)
+        if joy and joy.fields[name] then joy.fields[name]:set_value(v) end
+        if mvs_joy and mvs_joy.fields[name] then mvs_joy.fields[name]:set_value(v) end
+    end
+    if done ~= 0 then
+        return true
+    end
+    if ef_state == 0 then
+        set("P1 Left", 1)          -- one press: A -> END (the short way)
+        ef_state = 1
+    elseif ef_state == 1 then
+        set("P1 Left", 0)          -- release; wait for the ring to rest on END
+        if phase == target and phase == 216 then
+            set("P1 A", 1)
+            ef_state = 2
+        end
+    elseif ef_state == 2 then
+        set("P1 A", 0)
+        ef_state = 3
+    end
+    return true
+end
+
+-- M6 Task 10 / high-score boards Task B2: the card-log pairs — the
+-- commands and answers the cart's card calls left in card_log (u16s:
+-- command, answer, ... , 0 terminated), as <cmd>:<ans> pairs joined by
+-- commas. Read from RAM the frame after a save (the cart's GAME OVER
+-- update + card calls ran in the cart's frame; the probe reads at the
+-- START of the MAME frame, so the answers appear one frame later). The
+-- checker keys run 1's fresh card on "2:81" then "0:0" then "3:0" (LOAD
+-- 0x81, FORMAT 0, SAVE 0) and the no-card runs on "2:80" ("3:80" for the
+-- save).
 local function cardlog_rec(n, fc)
     if cardlog_addr == 0 then return end
     local pairs = {}
@@ -320,13 +421,14 @@ local function read_row_text(row)
     local c
     for c = 0, 39 do
         local tile = vread(FR + c * 32 + row) & 0x0fff
-        -- the HUD icons are S ROM tiles 128/129 (colour index 1): write
-        -- them as <NN> escapes so the row stream stays ASCII (a raw 0x80
-        -- byte would not survive a UTF-8 text read); the checker decodes
-        if tile >= 0x80 and tile <= 0xff then
+        -- every S ROM tile >= 0x80 is written as a <NN> escape so the row
+        -- stream stays ASCII (a raw 0x80+ byte would not survive a UTF-8
+        -- text read): the HUD icons (128/129), the title's logo tiles
+        -- (130..193) and high-score boards Task B4's thick-font tiles
+        -- (>= TITLE2_ROW_BASE 512; the checker recovers each cell's
+        -- character from its index block and its left neighbour's spill).
+        if tile >= 0x80 then
             line = line .. string.format("<%d>", tile)
-        elseif tile > 0xff then
-            line = line .. "?"
         else
             line = line .. string.char(tile)
         end
@@ -343,15 +445,15 @@ end
 local ROW3 = string.rep(" ", 12)
 for c = 0, 15 do ROW3 = ROW3 .. string.format("<%d>", 130 + 16 + c) end
 ROW3 = ROW3 .. string.rep(" ", 12)
--- the title gate: pages 1..8 are unambiguous (only the cart's title code
--- ever writes 1..8 to title_page RAM); page 0 is ambiguous pre-main (the
+-- the title gate: pages 1..10 are unambiguous (only the cart's title code
+-- ever writes 1..10 to title_page RAM); page 0 is ambiguous pre-main (the
 -- BIOS's RAM clear leaves 0 in the byte), so the drawn row 3 (the logo,
 -- which only the title draws) must confirm it. Reading row 3 alone is
 -- safe: it is read in isolation, before any other row of a sweep.
 local function is_title()
     if page_addr ~= 0 then
         local p = sp:read_u8(page_addr)
-        if p >= 1 and p <= 8 then return true end
+        if p >= 1 and p <= 10 then return true end
         if p == 0 then return read_row_text(3) == ROW3 end
         return false
     end
@@ -392,12 +494,26 @@ local function dump_fix(nn, fc)
     end
 end
 
+-- Task G1: GAME OVER is drawn in the thick title font (build/title_font.h);
+-- recover each cell's character from its tile index block.
+local TITLE2_ROW_BASE = 512
+local TITLE2_NPROF = 21
+local TITLE2_CHARS = "\1\2 !%&'()+,-./0123456789:<=>?ABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+
+local function tile_char(tile)
+    if tile >= TITLE2_ROW_BASE then
+        local idx = math.floor((tile - TITLE2_ROW_BASE) / TITLE2_NPROF)
+        return TITLE2_CHARS:byte(idx + 1) or 32
+    end
+    return tile
+end
+
 local function is_go_text()
     local want = "GAME OVER"
     local c
     for c = 1, #want do
         local tile = vread(FR + (15 + c - 1) * 32 + 7) & 0x0fff
-        if tile ~= string.byte(want, c, c) then
+        if tile_char(tile) ~= string.byte(want, c, c) then
             return 0
         end
     end
@@ -448,14 +564,14 @@ local function title_sample(nn, fc)
                               sp:read_u8(level_addr),
                               sp:read_u8(level_addr + 1)))
     end
-    -- M6 Task 9: the best table in the same frame, so the checker can
-    -- compare the drawn rows' best values (page 0 row 7, page 1's rows)
-    -- against exactly what the cart had.
+    -- high-score boards Task B2: the board in the same frame, so the
+    -- checker can compare the drawn rows (page 0's row 9 and the board
+    -- pages' five entries) against exactly what the cart had.
     best_rec(nn, fc)
-    -- M6 Task 10: the card-log answers in the same frame (the first-entry
-    -- LOAD ran before the first title frame, so the answers are set) —
-    -- the checker keys run 1's fresh-card "2:81", run 2's "2:0" and run
-    -- 3's no-card "2:80" on the title frames.
+    -- M6 Task 10 / Task B2: the card-log answers in the same frame (the
+    -- first-entry LOAD ran before the first title frame, so the answers
+    -- are set) — the checker keys run 1's fresh-card "2:81", run 2/3's
+    -- "2:0" and run 4's no-card "2:80" on the title frames.
     if best_aes_run then
         cardlog_rec(nn, fc)
     end
@@ -522,36 +638,44 @@ local function tick()
                 end
             end
         end
-        -- M6 Task 9, the best-mvs game leg: Task 1's seed makes the old
-        -- centred game score 0 (no kill), which fails this leg's "a real
-        -- score" proof; hold Right and tap A every 11 frames instead, a
-        -- deterministic run that does score (the model gives fc 20240,
-        -- score 987 at seed 0xadf9). The ship turns right, the fire taps
-        -- line up with the missiles it meets. Nothing else is pressed,
-        -- and the titles of the other best-mvs legs (runs 2 and 3) get
-        -- no input at all.
+        -- high-score boards Task B2, the best-mvs game leg: hold Left and
+        -- press A only when a missile is aligned with the ship's cell (the
+        -- aim_fire policy), a deterministic run that scores above the
+        -- board's default 5th entry (the fixed Right + A-every-11 policy
+        -- scored below it). Nothing else is pressed, and the titles of the
+        -- other best-mvs legs (runs 2..4) get no input at all.
         if best_run and in_cart and framecnt() >= 1 and mvs_joy then
-            local fc = framecnt()
-            mvs_joy.fields["P1 Left"]:set_value(0)
-            mvs_joy.fields["P1 Up"]:set_value(0)
-            mvs_joy.fields["P1 Right"]:set_value(1)
-            mvs_joy.fields["P1 Down"]:set_value(0)
-            mvs_joy.fields["P1 A"]:set_value(fc <= 20240 and (fc % 11) == 0
-                                             and 1 or 0)
+            local over = rules_addr ~= 0
+                and sp:read_u8(rules_addr + 82) ~= 0
+            if entry_finish and over then
+                -- B6: the game is over; release the game input and finish
+                -- the entry screen (three spaces at END).
+                mvs_joy.fields["P1 Left"]:set_value(0)
+                mvs_joy.fields["P1 Up"]:set_value(0)
+                mvs_joy.fields["P1 Right"]:set_value(0)
+                mvs_joy.fields["P1 Down"]:set_value(0)
+                mvs_joy.fields["P1 A"]:set_value(0)
+                entry_finish_apply()
+            else
+                mvs_joy.fields["P1 Left"]:set_value(1)
+                mvs_joy.fields["P1 Up"]:set_value(0)
+                mvs_joy.fields["P1 Right"]:set_value(0)
+                mvs_joy.fields["P1 Down"]:set_value(0)
+                mvs_joy.fields["P1 A"]:set_value(aim_fire() and 1 or 0)
+            end
         end
         -- the best-mvs game leg's GAME OVER: its score (mis.score10 @
-        -- mis+76) and the best table right after the cart's GAME OVER
-        -- update, read from RAM in the same frame (the proof's "read
-        -- mis.score10 at GAME OVER: it must be > 0"). Gated on mis_addr
-        -- and best_addr (which boot_test.sh always sets for best-mvs); the
-        -- title-only legs (runs 2 and 3) never reach fc >= 1, so the
-        -- snapshot below covers them.
+        -- mis+76) and the board right after the cart's GAME OVER update,
+        -- read from RAM in the same frame (the proof's "read mis.score10
+        -- at GAME OVER: it must be > 0"). Gated on mis_addr and best_addr
+        -- (which boot_test.sh always sets for best-mvs); the title-only
+        -- legs (runs 2..4) never reach fc >= 1, so the snapshot below
+        -- covers them.
         if best_run and in_cart and n >= 280 and framecnt() >= 1
            and mis_addr ~= 0 and best_addr ~= 0 then
             local fc = framecnt()
-            -- Task 1: the floor only has to predate the model's GAME OVER
-            -- (fc 20240 under seed 0xadf9 for the scoring game; 24963 was
-            -- the RNG_SEED game), so it is well below the first death.
+            -- the floor only has to predate the aim game's GAME OVER, so
+            -- it is well below the first death
             if mvs_go == nil and fc >= 6000 and is_go_text() == 1 then
                 mvs_go = fc
                 mvs_go_n = n
@@ -559,12 +683,13 @@ local function tick()
                 f:write(string.format("SC %d %d %d\n", n, fc,
                                       sp:read_u32(mis_addr + 76)))
                 best_rec(n, fc)
+                dump_fix(n, fc)
                 machine.video:snapshot()
                 f:write(string.format("SNAP %d %d\n", n, fc))
                 snap_taken = true
             end
         end
-        -- the best-mvs title-only legs (runs 2 and 3 never start a game):
+        -- the best-mvs title-only legs (runs 2..4 never start a game):
         -- the first confirmed title frame still snapshots, so boot_test.sh
         -- has a file to copy. (Run 1's title snapshot is superseded by the
         -- GAME OVER one above.)
@@ -575,18 +700,26 @@ local function tick()
             snap_taken = true
         end
         -- the best-mvs game leg's post-return title rows: the proof "the
-        -- return opens HIGH SCORES — page 1's NORMAL row reads score10 *
-        -- 10, and flow_best in RAM is valid and holds it". Sampled every 6
-        -- MAME frames from ~the window-expiry frame (GO + 290) while the
-        -- game-session counter is 0 (the post-return title). The T record
-        -- (page/t/credits, from the cart's BSS) and the L record (the
-        -- level pair) let the checker gate the NORMAL-row proof and the
-        -- model compare on page 1.
+        -- return opens NORMAL's board page — row 11 reads the board's top
+        -- entry, and flow_board in RAM is valid and holds the game's
+        -- entry". Sampled every 6 MAME frames from ~the
+        -- window-expiry frame (GO + 290) while the game-session counter is
+        -- 0 (the post-return title). The T record (page/t/credits, from the
+        -- cart's BSS) and the L record (the level pair) let the checker
+        -- gate the NORMAL row-11 proof and the model compare on page 2.
         if best_run and mvs_go ~= nil and framecnt() == 0
            and n >= mvs_go_n + 290 and n >= next_nrs then
-            dump_fix(n, 0)
-            best_rec(n, 0)
             local page, t, cred = title_state()
+            -- B6: the returned page's new-entry row blinks every other 16
+            -- frames; skip the F/B sample on a hidden phase so B2's model
+            -- compare keeps its full-row claim (the entry leg proves the
+            -- blink). title_fc = title_t - 2 on the returned first page.
+            local hidden = (page == 2 and t ~= nil and t >= 2
+                            and (((t - 2) >> 4) & 1) == 1)
+            if not hidden then
+                dump_fix(n, 0)
+                best_rec(n, 0)
+            end
             f:write(string.format("T %d 0 %d %d %d\n", n,
                                   page or -1, t or -1, cred or -1))
             if level_addr ~= 0 then
@@ -634,6 +767,7 @@ local function tick()
                 mvs_go = framecnt()
                 mvs_go_n = n
                 f:write(string.format("GO %d %d\n", n, framecnt()))
+                dump_fix(n, framecnt())
                 if not snap_taken then
                     machine.video:snapshot()
                     f:write(string.format("SNAP %d %d\n", n, framecnt()))
@@ -664,15 +798,25 @@ local function tick()
             local in_pre = (n >= MVS_PRE_LO and n <= MVS_PRE_HI)
             local in_post = (n >= MVS_POST_LO and n <= MVS_POST_HI)
             if in_pre or in_post then
-                title_sample(n, framecnt())
+                local skip = false
+                local blink = blink_active_addr ~= 0
+                    and sp:read_u8(blink_active_addr) ~= 0
+                if blink then
+                    local page, t, _cred = title_state()
+                    skip = (page == 2 and t ~= nil and t >= 2
+                            and (((t - 2) >> 4) & 1) == 1)
+                end
+                if not skip then
+                    title_sample(n, framecnt())
+                end
                 title_mvs_next = n + 6
             end
         end
         -- M6 Task 6: the pages-c run's dome dumps at the title-frame page
         -- PINs, gated on fc == 0 and row 3 (is_title) like the pages run.
         -- One dump per page (0, 1, 2), at the first frame of each that the
-        -- sampling cursor hits; the checker compares page 2's "all hidden"
-        -- columns against page 1's and pages 0/a0's against each other.
+        -- sampling cursor hits; the checker compares each page's dome
+        -- chain (attract A2 draws the scene under every page).
         if pages_c_run and dome_snap and dome_snap2 == nil and n >= next_dome_snap
            and n >= 280 and in_cart and framecnt() == 0 then
             if is_title() then
@@ -791,7 +935,22 @@ local function tick()
             -- dirty fix layer (is_title's old job, done safely on the
             -- already-dumped rows).
             if n >= title_next then
-                title_sample(n, fc)
+                -- Task B6: the returned title's new-entry row blinks; skip
+                -- the generic sample on a hidden phase (the best legs'
+                -- full-row model compare would otherwise see the blank).
+                -- Runs 2/3 never played, so their page-2 auto-turn samples
+                -- are not skipped.
+                local skip = false
+                local blink = blink_active_addr ~= 0
+                    and sp:read_u8(blink_active_addr) ~= 0
+                if blink then
+                    local page, t, _cred = title_state()
+                    skip = (page == 2 and t ~= nil and t >= 2
+                            and (((t - 2) >> 4) & 1) == 1)
+                end
+                if not skip then
+                    title_sample(n, fc)
+                end
                 title_next = n + 6
             end
             -- M6 Task 10, the best-aes title-only legs (runs 2 and 3 with
@@ -806,41 +965,52 @@ local function tick()
             end
             -- M6 Task 6, flow-pages (AES, no Start): the page-turn
             -- bookkeeping and the dome dumps at the page PINs. The PINs are
-            -- the first title frame of page 1 / 2 / 8 / 0-after-8, read
+            -- the first title frame of page 1 / 2 / 10 / 0-after-10, read
             -- from the cart's title_page RAM; the checker proves the page
             -- advanced every 295 frames by the T records alone, and uses
             -- these PINs for the event-keyed dome proofs (page 0's first
-            -- frame -> hidden pages 1..8 -> the rebuilt page 0 after the
-            -- wrap). Each PIN dumps the dome's SCB words and snapshots.
+            -- frame -> pages 1..10 -> the rebuilt page 0 after the wrap).
+            -- Each PIN dumps the dome's SCB words and snapshots.
             if pages_run and fc == 0 and is_title() and in_cart then
                 if page_addr ~= 0 then
                     local page = sp:read_u8(page_addr)
                     -- one dump at the first title frame of EVERY page
-                    -- 0..8 (the "first page-0 frame" the checker compares
+                    -- 0..10 (the "first page-0 frame" the checker compares
                     -- the wrap's rebuilt page 0 against, and each hidden
                     -- page's all-zero columns), plus the first page-0
                     -- frame after the wrap.
                     if page_pin[page] == nil then
                         page_pin[page] = n
                         if dome_snap and page ~= 0 then
-                            dome_dump(n, 0)
+                            pending_dump = { at = n + 2, page = page }
                         elseif dome_snap and page == 0 and dome_snap0 == nil then
                             dome_snap0 = n
-                            dome_dump(n, 0)
+                            pending_dump = { at = n + 2, page = 0 }
                         end
                     end
-                    -- the first page-0 title frame AFTER the wrap (page 8
+                    -- the first page-0 title frame AFTER the wrap (page 10
                     -- was seen): dump it ONCE (a bout of re-dumps would
                     -- give the checker several "second page 0" blocks).
-                    if dome_snap and dome_wrapped == nil and page == 8 then
+                    if dome_snap and dome_wrapped == nil and page == 10 then
                         dome_wrapped = n
                         next_turn = math.max(next_turn or 0, n + 1)
                     end
                     if dome_snap and next_turn ~= nil and page == 0
                        and n >= next_turn then
-                        dome_dump(n, 0)
+                        pending_dump = { at = n + 2, page = 0 }
                         next_turn = nil        -- only the first wrapped frame
                     end
+                end
+                -- take the scheduled C block/snapshot now that MAME's
+                -- display has caught up with the page the pin saw.
+                if dome_snap and pending_dump ~= nil
+                   and n >= pending_dump.at then
+                    local now_page = page_addr ~= 0
+                        and sp:read_u8(page_addr) or -1
+                    if now_page == pending_dump.page then
+                        dome_dump(n, 0)
+                    end
+                    pending_dump = nil
                 end
                 -- whatever the cart reports (page_addr may be 0 before the
                 -- M6 Task 6 build), the first confirmed title frame still
@@ -857,18 +1027,29 @@ local function tick()
             -- Up-held game"), nothing else; A only for the FLOW_RESTART leg.
             -- (The flow-pages-c run is MVS: it never reaches this branch —
             -- no Start is pressed, fc stays 0 for the whole run.)
-            -- M6 Task 10, the best-aes game leg: Task 1's seed makes the
-            -- old centred game score 0 (no kill), which fails this leg's
-            -- "a real score" proof; hold Right and tap A every 11 frames
-            -- instead, the same deterministic policy as best-mvs (the
-            -- model gives fc 17818, score 699 at seed 0xaede).
+            -- high-score boards Task B2, the best-aes game leg: hold Left
+            -- and press A only when a missile is aligned with the ship's
+            -- cell (the same aim_fire policy as best-mvs), a deterministic
+            -- run that scores above the board's default 5th entry.
             if best_aes_run and joy then
-                joy.fields["P1 Left"]:set_value(0)
-                joy.fields["P1 Up"]:set_value(0)
-                joy.fields["P1 Right"]:set_value(1)
-                joy.fields["P1 Down"]:set_value(0)
-                joy.fields["P1 A"]:set_value(fc <= 17818 and (fc % 11) == 0
-                                             and 1 or 0)
+                local over = rules_addr ~= 0
+                    and sp:read_u8(rules_addr + 82) ~= 0
+                if entry_finish and over then
+                    -- B6: release the game input and finish the entry
+                    -- screen with three spaces at END.
+                    joy.fields["P1 Left"]:set_value(0)
+                    joy.fields["P1 Up"]:set_value(0)
+                    joy.fields["P1 Right"]:set_value(0)
+                    joy.fields["P1 Down"]:set_value(0)
+                    joy.fields["P1 A"]:set_value(0)
+                    entry_finish_apply()
+                else
+                    joy.fields["P1 Left"]:set_value(1)
+                    joy.fields["P1 Up"]:set_value(0)
+                    joy.fields["P1 Right"]:set_value(0)
+                    joy.fields["P1 Down"]:set_value(0)
+                    joy.fields["P1 A"]:set_value(aim_fire() and 1 or 0)
+                end
             elseif joy then
                 joy.fields["P1 Up"]:set_value(1)
             end
@@ -898,11 +1079,11 @@ local function tick()
             if p1_go == nil and fc >= 6480 and is_go_text() == 1 then
                 p1_go = fc
                 f:write(string.format("GO %d %d\n", n, fc))
-                -- M6 Task 9 (the flow-return leg): the game's score at
-                -- GAME OVER (mis.score10 @ mis+76) and the best table as
-                -- the cart's GAME OVER update left it in backup RAM — the
-                -- checker proves the returned title's page 1 shows
-                -- score10 * 10 for NORMAL (proof 3).
+                -- high-score boards Task B2 (the flow-return-best leg):
+                -- the game's score at GAME OVER (mis.score10 @ mis+76) and
+                -- the board as the cart's GAME OVER update left it in
+                -- backup RAM — the checker proves the returned title's
+                -- page 2 (NORMAL's board page) shows the board's top entry.
                 if best_return and mis_addr ~= 0 and best_addr ~= 0 then
                     f:write(string.format("SC %d %d %d\n", n, fc,
                                           sp:read_u32(mis_addr + 76)))
@@ -919,11 +1100,20 @@ local function tick()
                     best_rec(n, fc)
                     card_ans_seen_n = n + 2
                 end
+                -- Task G1: the sampled GAME OVER rows (the checker holds
+                -- rows 7/8 to the model) and a snapshot a few frames later,
+                -- once the display has settled on the thick text.
+                dump_fix(n, fc)
                 if not snap_taken then
-                    machine.video:snapshot()
-                    f:write(string.format("SNAP %d %d\n", n, fc))
-                    snap_taken = true
+                    go_snap_fc = fc + 5
                 end
+            end
+            if go_snap_fc ~= nil and not go_snap_done and fc >= go_snap_fc then
+                machine.video:snapshot()
+                f:write(string.format("SNAP %d %d\n", n, fc))
+                dump_fix(n, fc)
+                go_snap_done = true
+                snap_taken = true
             end
             -- M6 Task 7, the level-select run: boot_test.sh needs a
             -- snapshot, and this run never reaches GAME OVER (it covers
@@ -934,19 +1124,24 @@ local function tick()
                 f:write(string.format("SNAP %d %d\n", n, fc))
                 snap_taken = true
             end
-            -- M6 Task 10, the best-aes leg's post-return title: the proof
-            -- "the return opens HIGH SCORES — page 1's NORMAL row reads the
-            -- score". Sampled every 6 MAME frames from ~the window-expiry
-            -- frame (p1_go + 290) while the game-session counter is 0
-            -- (the post-return title; the checker gates on the drawn rows
-            -- and T records as the MVS best leg does). The T/L/B records
-            -- let the checker run the model on page 1.
+            -- high-score boards Task B2, the best-aes leg's post-return
+            -- title: the proof "the return opens NORMAL's board page — row
+            -- 11 reads the board's top entry". Sampled every 6 MAME
+            -- frames from ~the window-expiry frame (p1_go + 290) while the
+            -- game-session counter is 0 (the post-return title; the checker
+            -- gates on the drawn rows and T records as the MVS best leg
+            -- does). The T/L/B records let the checker run the model on
+            -- page 2.
             if best_aes_run and p1_go ~= nil and fc == 0
                and n >= p1_go + 290 and n >= next_aes_nrs then
-                dump_fix(n, 0)
-                best_rec(n, 0)
-                cardlog_rec(n, 0)
                 local page, t, cred = title_state()
+                local hidden = (page == 2 and t ~= nil and t >= 2
+                                and (((t - 2) >> 4) & 1) == 1)
+                if not hidden then
+                    dump_fix(n, 0)
+                    best_rec(n, 0)
+                end
+                cardlog_rec(n, 0)
                 f:write(string.format("T %d 0 %d %d %d\n", n,
                                       page or -1, t or -1, cred or -1))
                 if level_addr ~= 0 then

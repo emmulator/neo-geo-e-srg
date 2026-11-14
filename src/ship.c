@@ -27,6 +27,7 @@ void ship_place(ship_t *s, u8 cell)
     s->jumped = 0;                       /* M7: no jump on a place/respawn frame */
     s->spinning = s->spin_acc = 0;
     s->acc_s = s->acc_l = s->inc_s = s->inc_l = 0;
+    s->heading = 1;                      /* H4: up-right, the craft's old 3/4 view */
     for (i = 0; i < sizeof s->broken; i++)
         s->broken[i] = 0;
 }
@@ -43,6 +44,7 @@ void ship_locate(ship_t *s, u8 cell)
     s->spinning = s->spin_acc = 0;
     s->last_dir = 8;
     s->acc_s = s->acc_l = s->inc_s = s->inc_l = 0;
+    s->heading = 1;                      /* H4: up-right, as a place sets it */
 }
 
 void ship_reset(ship_t *s)
@@ -68,6 +70,13 @@ u8 ship_dir(u8 input)
     if (input & CNT_DOWN)
         y--;
     return dirs[y + 1][x + 1];
+}
+
+/* H4: the craft faces its way. The Vectrex's 32 stick directions map to 8
+ * headings, h = d / 4 (0 right, 2 up, 4 left, 6 down), each 45 degrees. */
+u8 ship_heading(u8 d)
+{
+    return (u8)(d / 4);
 }
 
 /* e-srg.c cell_toward */
@@ -170,8 +179,11 @@ void ship_frame(ship_t *s, u8 input, u8 pressed)
         if (!s->jump_req)                /* the way the stick last pointed */
             return;
         d = s->last_dir;
-    } else
+    } else {
         s->last_dir = d;
+        s->heading = ship_heading(d);    /* H4: turn before any move/jump/spin
+                                          * is tried, so a blocked push turns */
+    }
     v = (u8)(s->dome_angle % CELL_VIEWS);
     if (s->jump_req) {                   /* two cells on, over the next one */
         s->jump_req = 0;

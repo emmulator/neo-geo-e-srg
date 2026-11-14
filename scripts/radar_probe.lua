@@ -19,9 +19,13 @@
 --     lock_t@36, locked@37, ellipse_bright@38 — the very struct the drawing
 --     read, so the checker can prove the drawing's fields against it;
 --   - every radar sprite slot's VRAM: SCB2/SCB3/SCB4 and SCB1 row-0 tile +
---     attribute;
---   - the ellipse's palette entry (bank RADAR_PAL_BANK 20, entry 1 =
---     0x400282);
+--     attribute, plus the whole SCB1 column (K lines, rows 0..31, for the
+--     leftover-garbage proof);
+--   - the radar's two palette banks (Task 10): bank 20 entries 0..4 (the
+--     frame's radar_pal, entry 1 the blinking dim/bright) and bank 21
+--     entries 0..1 (the sticks'/headings' radar_stick_pal);
+--   - on the snapshot frame, the fix rows that can overlap the frame's box
+--     (F lines: each cell's 12-bit tile, for proof 3's coverage);
 --   - every 30th cart frame, ALL 381 sprite slots' SCB3/SCB4, so the
 --     checker can count the most sprites on any line in the radar rows.
 --
@@ -36,8 +40,16 @@
 --   O <fc> <i> <state> <kind> <ring> <phi> <life> <r> <dr>
 --   B <fc> <k> <shown> <locked> <sx> <sy> <h> <hx> <hy>
 --   R <fc> <lock_t> <locked> <bright>
---   T <fc> <slot> <attr> <tile0> <scb2> <scb3> <scb4>
---   P <fc> <pal15>
+--   b <fc> <k> <shown> <locked> <sx> <sy> <h> <hx> <hy>
+--   r <fc> <lock_t> <locked> <bright>   the PREVIOUS frame's cart radar_t
+--                                      (Task 18b: the VRAM at fc is the
+--                                      prepared state of fc-1)
+--   T <fc> <slot> <attr> <tile0> <scb2> <scb3> <scb4> <attr_row1> <attr_row2>
+--   K <fc> <slot> <tile0> .. <tile31>  the whole SCB1 column
+--   Q <fc> <entry> <word>           bank 20 entry 0..4
+--   V <fc> <entry> <word>           bank 21 entry 0..1
+--   P <fc> <pal15>                   bank 20 entry 1 (the blink)
+--   F <fc> <row> <tile 0> .. <tile 39>  a fix row (on the SNAP frame)
 --   W <fc>                          a full sprite census follows:
 --   w <slot> <scb3> <scb4> ...      (all 381 slots)
 --   SNAP <fc>                       snapshot taken on a frame showing both
@@ -69,7 +81,17 @@ local SCB1, SCB2, SCB3, SCB4 = 0x0000, 0x8000, 0x8200, 0x8400
 -- the one sprite slot map (M5 Task 1): src/slots.h -> build/slots.lua
 local S = dofile((os.getenv("REPO") or ".") .. "/build/slots.lua")
 local RADAR0, RADAR_COUNT = S.RADAR_SPRITE, S.RADAR_COUNT
-local RADAR_PAL_ENTRY = 0x400000 + (20 * 16 + 1) * 2   -- bank 20, entry 1
+-- Task 10: the frame's bank 20 (all of radar_pal, entry 1 blinking dim/bright)
+-- and the sticks'/headings' own bank 21 (radar_stick_pal, never written after
+-- init). Palette RAM: 0x400000 + (bank * 16 + entry) * 2.
+local PAL_BASE = 0x400000
+local RADAR_PAL_BANK, RADAR_STICK_PAL_BANK = 20, 21
+local RADAR_PAL_ENTRY = PAL_BASE + (RADAR_PAL_BANK * 16 + 1) * 2
+local FIXMAP = 0x7000
+-- the fix rows that can intersect the radar's frame box (y RADAR_CY-16 ..
+-- RADAR_CY+15 = 190..221 at RADAR_CY 206): fix row r is y 8r-16..8r-9, so
+-- rows 24..29 — dumped on the snapshot for proof 3's coverage.
+local FIX_BOX_ROWS = {24, 25, 26, 27, 28, 29}
 
 -- the C structs' m68k layout (checked against the ELF's DWARF; see the
 -- header comment): the offsets never change mid-task
@@ -113,6 +135,44 @@ local function s16(v)
     return v
 end
 
+-- Task 18b: the VRAM read at the end of cart frame fc is the
+-- radar_gfx_prepare state of frame fc-1 (the commit runs at the start of
+-- fc), so every sample also dumps the PREVIOUS frame's cart radar_t (the
+-- `b`/`r`/`p` lines). The checker uses those for the VRAM/palette/pixel
+-- comparisons, exactly as check_props.py uses the previous frame's angle.
+local last_radar = { blips = {}, lock_t = 0, locked = 0, bright = 0 }
+for k = 0, 2 do
+    last_radar.blips[k] = { 0, 0, 0, 0, 0, 0, 0 }
+end
+local function read_radar()
+    local t = { blips = {}, lock_t = sp:read_u8(radar_addr + 36),
+                locked = sp:read_u8(radar_addr + 37),
+                bright = sp:read_u8(radar_addr + 38) }
+    for k = 0, 2 do
+        local b = radar_addr + k * 12
+        t.blips[k] = { sp:read_u8(b + 0), sp:read_u8(b + 1),
+                       s16(sp:read_u16(b + 2)), s16(sp:read_u16(b + 4)),
+                       sp:read_u8(b + 6), s16(sp:read_u16(b + 8)),
+                       s16(sp:read_u16(b + 10)) }
+    end
+    return t
+end
+
+-- Task 10 proof 3: on the snapshot frame, dump the fix rows that can
+-- overlap the frame's 64 x 32 box (rows 24..29 at RADAR_CY 206): each
+-- cell's 12-bit tile number, so the checker can decode the S ROM's opaque
+-- pixels (the fix layer draws over every sprite).
+local function dump_fix_rows(fc)
+    local r, c
+    for _, r in ipairs(FIX_BOX_ROWS) do
+        f:write("F " .. fc .. " " .. r)
+        for c = 0, 39 do
+            f:write(string.format(" %d", vread(FIXMAP + c * 32 + r) & 0x0fff))
+        end
+        f:write("\n")
+    end
+end
+
 local function dump_sample(fc)
     local i, s, k
     local cell = sp:read_u8(ship_addr + 2)
@@ -139,13 +199,48 @@ local function dump_sample(fc)
                           sp:read_u8(radar_addr + 36),
                           sp:read_u8(radar_addr + 37),
                           sp:read_u8(radar_addr + 38)))
+    -- Task 18b: the previous frame's cart radar_t (the state the VRAM at fc
+    -- holds; see the comment above last_radar)
+    for k = 0, 2 do
+        local b = last_radar.blips[k]
+        f:write(string.format("b %d %d %d %d %d %d %d %d %d\n",
+                              fc, k, b[1], b[2], b[3], b[4], b[5],
+                              b[6], b[7]))
+    end
+    f:write(string.format("r %d %d %d %d\n", fc, last_radar.lock_t,
+                          last_radar.locked, last_radar.bright))
     for s = 0, RADAR_COUNT - 1 do
         local slot = RADAR0 + s
         local attr = vread(SCB1 + slot * 64 + 1)
         local t0 = vread(SCB1 + slot * 64)
-        f:write(string.format("T %d %d %04x %04x %04x %04x %04x\n",
+        -- Task 10: the whole SCB1 column's tile words (rows 0..31). The
+        -- boot-test's planted-garbage proof needs them, and the frame's
+        -- SCB1 palette comes from row 0's attribute (row 1's too: the frame
+        -- is 2 tiles tall).
+        local tiles = {}
+        for r = 0, 31 do
+            tiles[r + 1] = vread(SCB1 + slot * 64 + r * 2)
+        end
+        f:write(string.format("T %d %d %04x %04x %04x %04x %04x %04x %04x\n",
                               fc, slot, attr, t0, vread(SCB2 + slot),
-                              vread(SCB3 + slot), vread(SCB4 + slot)))
+                              vread(SCB3 + slot), vread(SCB4 + slot),
+                              vread(SCB1 + slot * 64 + 3),
+                              vread(SCB1 + slot * 64 + 5)))
+        f:write("K " .. fc .. " " .. slot)
+        for r = 0, 31 do
+            f:write(string.format(" %04x", tiles[r + 1]))
+        end
+        f:write("\n")
+    end
+    -- Task 10: both radar palette banks' first 5 words (bank 20 entries
+    -- 0..4 = radar_pal; bank 21 entries 0..4 = radar_stick_pal then unused)
+    for e = 0, 4 do
+        f:write(string.format("Q %d %d %04x\n", fc, e,
+                              sp:read_u16(PAL_BASE + (RADAR_PAL_BANK * 16 + e) * 2)))
+    end
+    for e = 0, 1 do
+        f:write(string.format("V %d %d %04x\n", fc, e,
+                              sp:read_u16(PAL_BASE + (RADAR_STICK_PAL_BANK * 16 + e) * 2)))
     end
     f:write(string.format("P %d %04x\n", fc, sp:read_u16(RADAR_PAL_ENTRY)))
 end
@@ -187,9 +282,13 @@ local function tick()
             if not snapped and locked ~= 0 and blip1_shown ~= 0 then
                 machine.video:snapshot()
                 f:write(string.format("SNAP %d\n", fc))
+                dump_fix_rows(fc)
                 snapped = true
             end
             sample = sample + 1
+        end
+        if radar_addr ~= 0 then
+            last_radar = read_radar()
         end
     end
     if n >= run_len then

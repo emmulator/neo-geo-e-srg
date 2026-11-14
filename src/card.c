@@ -1,27 +1,28 @@
-/* card.c: the AES memory card calls (M6 Task 10). See card.h.
+/* card.c: the AES memory card calls (M6 Task 10; high-score boards Task B2
+ * moved them to the board). See card.h.
  *
- * The AES keeps the per-level high scores on the memory card: at the
+ * The AES keeps the five-entry per-level board on the memory card: at the
  * first entry after power-on (and only then — the task's "_backup_ram
- * flag says it was done") the cart LOADs the saved best table; at GAME
- * OVER, when best_update changed the table, it SAVEs it, FORMATting the
- * card first if the save answers 0x81 (unformatted). On MVS none of
- * this runs (bios_mvs_flag == 0x80): backup RAM is the persistence
- * there.
+ * flag says it was done") the cart LOADs the saved board; at GAME OVER,
+ * when a qualifying score was inserted, it SAVEs the board, FORMATting the
+ * card first if the save answers 0x81 (unformatted). On MVS none of this
+ * runs (bios_mvs_flag == 0x80): backup RAM is the persistence there.
  *
  * The calls follow the confirmed sequence (plan §"The AES memory
  * card", verified 2026-10-17): unlock, set the command / start / size /
  * fcb / sub fields, call bios_card(), read bios_card_answer, lock.
- * fcb 0x0539 is the cart's rom_NGH_ID (ngdevkit's default 1337 in BCD),
- * sub 0 is the first save slot, the size is sizeof(best_t) (18 bytes).
+ * fcb is the cart's rom_NGH_ID (NGH_ID, the Makefile's: 0x7278, BCD),
+ * sub 0 is the first save slot, the size is sizeof(board_t) (126 bytes:
+ * one BIOS save/load call).
  *
  * Runs only at an entry and at GAME OVER, never per frame: the 32-bit
- * maths (best_valid's u32 compares) and the BIOS calls are allowed.
+ * maths (board_valid's u32 compares) and the BIOS calls are allowed.
  */
 #include <ngdevkit/bios-ram.h>
 #include <ngdevkit/memory-card.h>
 #include "card.h"
 
-#define CARD_FCB 0x0539              /* the cart's rom_NGH_ID, BCD */
+#define CARD_FCB NGH_ID               /* the cart's rom_NGH_ID, BCD (Makefile) */
 #define CARD_SUB 0                   /* the first save slot */
 
 /* the probe-facing call log (card.h): pairs of (command, answer),
@@ -46,15 +47,15 @@ static void card_log_call(u16 command, u8 answer)
     }
 }
 
-static u8 card_call(u8 command, const best_t *b, best_t *dst)
+static u8 card_call(u8 command, const board_t *b, board_t *dst)
 {
     ng_memory_card_unlock();
     bios_card_command = command;
     if (command == MC_CMD_LOAD_DATA)
         bios_card_start = (u32)dst;      /* load into the caller's buffer */
     else
-        bios_card_start = (u32)b;        /* save from the caller's table */
-    bios_card_size = sizeof(best_t);
+        bios_card_start = (u32)b;        /* save from the caller's board */
+    bios_card_size = sizeof(board_t);
     bios_card_fcb = CARD_FCB;
     bios_card_sub = CARD_SUB;
     bios_card();
@@ -63,22 +64,22 @@ static u8 card_call(u8 command, const best_t *b, best_t *dst)
 }
 
 /* one save attempt (the caller owns the FORMAT retry) */
-static u8 card_save_once(const best_t *b)
+static u8 card_save_once(const board_t *b)
 {
     return card_call(MC_CMD_SAVE_DATA, b, 0);
 }
 
-u8 card_load_best(best_t *b)
+u8 card_load_board(board_t *b)
 {
     u8 answer = card_call(MC_CMD_LOAD_DATA, 0, b);
 
     card_log_call(MC_CMD_LOAD_DATA, answer);
-    if (answer == MC_ERR_OK && best_valid(b))
+    if (answer == MC_ERR_OK && board_valid(b))
         return 1;
     return 0;
 }
 
-u8 card_save_best(const best_t *b)
+u8 card_save_board(const board_t *b)
 {
     u8 answer = card_save_once(b);
 
@@ -92,7 +93,7 @@ u8 card_save_best(const best_t *b)
             card_log_call(MC_CMD_SAVE_DATA, answer);
         }
     } else if (answer == MC_ERR_NO_CARD) {
-        /* no card: nothing to do; the caller keeps the backup-RAM table */
+        /* no card: nothing to do; the caller keeps the backup-RAM board */
     }
     return answer;
 }

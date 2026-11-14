@@ -57,9 +57,11 @@ def rint(x):
 
 def radar_h_defs():
     """read the user's constants from src/radar.h (the one tuning block).
-    RADAR_CY is an expression in the dome's header (DOME_Y + 112, the radar
-    keeps its place beside the dome's rim), so it is resolved here: the
-    tables follow the dome. Fail loudly if the expression drifts."""
+    RADAR_CY was an expression in the dome's header (DOME_Y + 112); since
+    Dome-scenery Task 2 it is a literal, and Task 8 moved it to 206 (onto
+    the console's left wing). A DOME_Y expression is still resolved here,
+    so the expression path keeps working. Fail loudly if a constant
+    drifts."""
     hdr = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "..", "src", "radar.h")
     txt = open(hdr).read()

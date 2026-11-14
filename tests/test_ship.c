@@ -1,4 +1,5 @@
 /* host unit tests for src/ship.c (built with tests/host/ngdevkit/neogeo.h) */
+#include <stddef.h>
 #include <stdio.h>
 #include "ship.h"
 #include "cells.h"
@@ -32,7 +33,61 @@ int main(void)
     CHECK(s.cell == CELL_START && s.move_left == 0 && s.lift == 0);
     CHECK(s.dome_angle == cell_step[CELL_START] && s.lat == cell_lat[CELL_START]);
 
+    /* H4: heading is the struct's LAST field (the MAME probe reads the fields
+     * before it at their old offsets) and a fresh game faces up-right (1) */
+    CHECK(offsetof(ship_t, heading) == 38);
+    CHECK(s.heading == 1);
+
+    /* H4: every Vectrex stick direction 0..31 maps to its heading d / 4 */
+    for (i = 0; i < 32; i++)
+        CHECK(ship_heading((u8)i) == (u8)(i / 4));
+
+    /* H4: from rest, every 8-way stick input turns the craft to its
+     * direction (or keeps the heading when the stick is centred); a move,
+     * jump or spin is tried after the turn */
+    for (i = 0; i < 16; i++) {
+        u8 d = ship_dir((u8)i);
+
+        ship_place(&s, CELL_START);
+        ship_frame(&s, (u8)i, 0);
+        if (d == 255) {
+            CHECK(s.heading == 1);              /* place's up-right */
+        } else {
+            CHECK(s.heading == ship_heading(d));
+            CHECK(s.last_dir == d);
+        }
+    }
+
+    /* H4: a centred stick keeps the heading */
+    ship_place(&s, CELL_START);
+    ship_frame(&s, CNT_UP, 0);                  /* turn up, start a move */
+    CHECK(s.heading == 2);
+    run(&s, CNT_UP, SHIP_MOVE_FRAMES);          /* land */
+    ship_frame(&s, 0, 0);
+    CHECK(s.heading == 2 && s.move_left == 0);
+
+    /* H4: a centred jump keeps the heading its last_dir already set (Review
+     * Focus 1: the craft faces the jump's way) */
+    ship_place(&s, CELL_START);
+    ship_frame(&s, CNT_UP, 0);
+    run(&s, CNT_UP, SHIP_MOVE_FRAMES);
+    ship_frame(&s, CNT_B, CNT_B);
+    CHECK(s.mlen == SHIP_JUMP_FRAMES && s.heading == 2);
+
+    /* H4: a push toward a broken cell turns the craft and does not move it */
+    ship_place(&s, CELL_START);
+    ship_set_broken(&s, cell_toward(CELL_START, 8));
+    ship_frame(&s, CNT_UP, 0);
+    CHECK(s.cell == CELL_START && s.move_left == 0 && s.heading == 2);
+
+    /* H4: place/locate set the up-right heading */
+    ship_place(&s, 0);
+    CHECK(s.heading == 1);
+    ship_locate(&s, 3);
+    CHECK(s.heading == 1);
+
     /* a move: the destination is set at once, the landing is exact */
+    ship_reset(&s);
     to = cell_toward(CELL_START, 8);
     CHECK(to != 255);
     ship_frame(&s, CNT_UP, 0);
@@ -81,12 +136,12 @@ int main(void)
     /* the peak: right/left spin the dome, wrapping, at the Vectrex's 50 steps
      * a second (a spin's first frame steps at once); down leaves */
     ship_place(&s, 0);
-    CHECK(s.dome_angle == 0 && s.lat == 0);
+    CHECK(s.dome_angle == 0 && s.lat == 0 && s.heading == 1);
     ship_frame(&s, CNT_RIGHT, 0);
-    CHECK(s.dome_angle == SHIP_TURN - 1 && s.cell == 0);
+    CHECK(s.dome_angle == SHIP_TURN - 1 && s.cell == 0 && s.heading == 0);
     ship_frame(&s, CNT_UP, 0);                            /* a pause ends the spin */
     ship_frame(&s, CNT_LEFT, 0);
-    CHECK(s.dome_angle == 0);
+    CHECK(s.dome_angle == 0 && s.heading == 4);
     ship_frame(&s, CNT_UP, 0);
     ship_frame(&s, CNT_LEFT, 0);
     CHECK(s.dome_angle == 1);

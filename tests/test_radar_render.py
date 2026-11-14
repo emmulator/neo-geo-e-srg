@@ -22,14 +22,21 @@ tiles. This test proves the shapes it draws:
     hflip, and proves the lit box pixels are the intended 1-px staircase
     from one box corner to the opposite (the runtime's placement formulas
     are covered by the boot-test; here the drawn staircase is the proof);
-  - the palette: radar_pal[1] decodes to the dim colour (40,120,165) and
-    radar_pal_bright to (175,228,245) (the lock-on blink writes exactly
-    this entry);
+  - the C ROM frame payload decodes to frame_picture() (the Elite disc:
+    the unchanged ellipse/roof lines on index 1 over a fill/rings/cross/
+    bezel), and the picture's index-1 pixels are exactly frame_bitmap()'s
+    lit pixels, so the lock-on blink still lights only the lines;
+  - the palette: the header's radar_pal is {0x8000, 0x2d61, 0x0210, 0x3940,
+    0x4000} (1 the dim amber rim/roof, 2..4 the disc), radar_pal_bright is
+    0x4fc5, and radar_stick_pal is {0x8000, 0x6f42} (the sticks' and
+    headings' own steady red-orange bank; the blink writes the frame
+    bank's entry 1 only);
   - the C ROM placement: the radar's tile bases sit exactly after the
-    star tile (STAR_TILE_BASE + 1), and the numbers of tiles match the
-    parts the Makefile concatenates (frame 8, sticks 198 tile-slots,
-    headings 578), so the picture at each base is the one the runtime
-    indexes (the boot-test decodes the real C ROM the same way);
+    broken-window sheet (dome-scenery Task 4 retired the star tile that
+    used to sit between them), and the numbers of tiles match the parts
+    the Makefile concatenates (frame 8, sticks 198 tile-slots, headings
+    578), so the picture at each base is the one the runtime indexes (the
+    boot-test decodes the real C ROM the same way);
   - the payload files round-trip: decoding the emitted c1/c2 bytes with
     the standard tile decoder (the one tests/test_broken_rom.py uses)
     gives back the generator's pictures exactly.
@@ -44,7 +51,6 @@ import numpy as np
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import render_radar as rr  # noqa: E402
-import render_stars  # noqa: E402  (STAR_TILE_BASE for the placement proof)
 
 TILE = rr.TILE
 PIX = rr.PIX
@@ -249,26 +255,57 @@ def test_heading_sizes_fit_the_task_bounds():
     assert rr.DX_N == HEAD_MAX + 1
 
 
+# ---- the frame picture (the Elite disc) ----------------------------------
+
+def test_frame_picture_lines_are_frame_bitmap_exactly():
+    """the C ROM frame's index-1 pixels (the lines the blink lights) are
+    exactly frame_bitmap()'s lit pixels, and the disc's other indices are
+    2..4 (the fill, the rings/cross, the bezel) — never index 1."""
+    lines = rr.frame_bitmap()
+    pic = rr.frame_picture()
+    assert pic.shape == lines.shape == (2 * TILE, 4 * TILE), pic.shape
+    assert np.array_equal(pic == PIX, lines == PIX)
+    # the disc's indices: 0 transparent, 2 fill, 3 rings/cross, 4 bezel
+    assert set(np.unique(pic)) <= {0, 2, 3, 4, PIX}, np.unique(pic)
+    # every disc pixel is one of those indices, and the fill dominates
+    n_fill = int((pic == 2).sum())
+    assert n_fill > 400, n_fill
+    assert int((pic == 3).sum()) > 100, int((pic == 3).sum())
+    assert int((pic == 4).sum()) > 100, int((pic == 4).sum())
+
+
 # ---- the palette ---------------------------------------------------------
 
-def test_palette_entries_are_the_dim_and_bright_colours():
-    dim = rr.rgb_to_neo15((40, 120, 165))
-    bright = rr.rgb_to_neo15((175, 228, 245))
-    # the exact packed15 values the header's radar_pal / radar_pal_bright
-    # carry (the blink writes these entries)
-    assert dim == 0x627a, hex(dim)
-    assert bright == 0x4aef, hex(bright)
+def test_palette_entries_are_the_words_the_header_carries():
+    """the header's three palettes are exactly the task's words: the frame
+    bank (1 the dim amber rim/roof, 2..4 the disc), the bright blink word,
+    and the sticks'/headings' own steady red-orange bank."""
+    txt = open(os.path.join(ROOT, "build", "radar_map.h")).read()
+
+    def words(name):
+        m = re.search(r"static const u16 %s\[16\] = \{(.*?)\};" % name, txt, re.S)
+        return [int(x, 16) for x in re.findall(r"0x[0-9a-fA-F]{4}", m.group(1))]
+
+    assert words("radar_pal") == [0x8000, 0x2d61, 0x0210, 0x3940, 0x4000]
+    assert words("radar_stick_pal") == [0x8000, 0x6f42]
+    m = re.search(r"static const u16 radar_pal_bright = (0x[0-9a-fA-F]{4});", txt)
+    assert int(m.group(1), 16) == 0x4fc5
+    # and the generator's own colour constants pack to those words
+    assert rr.rgb_to_neo15(rr.RADAR_DIM_RGB) == 0x2d61
+    assert rr.rgb_to_neo15(rr.RADAR_BRIGHT_RGB) == 0x4fc5
+    assert rr.rgb_to_neo15(rr.RADAR_FILL_RGB) == 0x0210
+    assert rr.rgb_to_neo15(rr.RADAR_RING_RGB) == 0x3940
+    assert rr.rgb_to_neo15(rr.RADAR_BEZEL_RGB) == 0x4000
+    assert rr.rgb_to_neo15(rr.RADAR_STICK_RGB) == 0x6f42
 
 
 # ---- the C ROM placement -------------------------------------------------
 
 def test_tile_counts_and_bases():
-    # the frame base is exactly one tile after the star tile, and the
-    # counts are what the Makefile concatenates (part sizes)
-    assert rr._FRAME_TILE_BASE == rr.rb.TILE_BASE + rr.rb.N_TILES + 1
-    assert rr._FRAME_TILE_BASE == 19138
-    assert rr._FRAME_TILE_BASE == render_stars.STAR_TILE_BASE + 1 \
-        if hasattr(render_stars, "STAR_TILE_BASE") else True
+    # the frame base is exactly after the broken-window sheet (the star tile
+    # is gone, dome-scenery Task 4), and the counts are what the Makefile
+    # concatenates (part sizes)
+    assert rr._FRAME_TILE_BASE == rr.rb.TILE_BASE + rr.rb.N_TILES
     assert 2 * H_N * rr.STICK_H_TILES == 198      # stick tile-slots
     assert 2 * rr.DX_N * rr.DX_N == 578           # heading tiles
 
@@ -284,9 +321,13 @@ def test_generated_header_matches():
     assert defs["RADAR_HEAD_TILES"] == 578
     assert defs["RADAR_STICK_H"] == 48
     assert defs["RADAR_FRAME_TILE_BASE"] == rr._FRAME_TILE_BASE
-    # the derived bases are expressions in the header; re-derive them here
-    assert rr._FRAME_TILE_BASE + 8 == 19146
-    assert rr._FRAME_TILE_BASE + 8 + 198 == 19344
+    # the bases are chained from the parts' sizes in the C ROM, which the
+    # Makefile writes back to back: the frame part is one tile after the
+    # broken sheet (the star tile is gone), the sticks start after the
+    # frame's tiles, the headings after the sticks' tile-slots. The absolute
+    # values move with the dome size; the chain does not.
+    assert rr._FRAME_TILE_BASE == rr.rb.TILE_BASE + rr.rb.N_TILES
+    assert 2 * H_N * rr.STICK_H_TILES == defs["RADAR_STICK_TILES"] * rr.STICK_H_TILES
 
 
 def test_payload_files_roundtrip():
@@ -299,7 +340,7 @@ def test_payload_files_roundtrip():
               "rb").read()
     c2 = open(os.path.join(ROOT, "build", "assets", "radar-frame.c2"),
               "rb").read()
-    frame = rr.frame_bitmap()
+    frame = rr.frame_picture()      # the C ROM's frame: the disc + the lines
     for r in range(2):
         for c in range(4):
             got = decode_tile(c1, c2, r * 4 + c)

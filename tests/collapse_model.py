@@ -15,15 +15,20 @@ f >= COLLAPSE_GONE (the dome is gone).
 
 Frame counts, Vectrex then scaled x 59/50:
     DEAD_FRAMES   100 -> 118
-    COLLAPSE_SHAKE 35 -> 41     shake: shake ramps 3, 7, 15, 31 at f 8, 16, 26
+    COLLAPSE_SHAKE 35 -> 41     shake: shake ramps 2, 5, 10, 21 at f 8, 16, 26
     COLLAPSE_GONE  85 -> 100     after that the dome is not drawn
 The fall (g = f - 41 = 0..58, while f < 100):
-    burst = g * 3                       the runs fly apart
-    fall = min(120, sum_{q=1..g>>3} 8q + (g & 7) * (g>>3)) (the Vectrex's
-           incremental fall += g>>3 capped at 120, in closed form)
+    burst = g * 2                       the runs fly apart
+    fall = min(80, sum_{q=1..g>>3} 8q + (g & 7) * (g>>3)) (the Vectrex's
+           incremental fall += g>>3, in closed form)
     dim = g                             the palette fades over the fall
 Exit: at f >= 100 the effects are 0 and draw is 0, through the last
 countdown frames to the respawn at 118.
+
+Dome-scenery Task 2: the shake, spread and fall are pixel quantities sized
+to the full 176x128 dome by hand, so they scale by 2/3 (the frame counts
+41/100/118 do not): shake ramps 3/7/15/31 -> 2/5/10/21, burst g*3 -> g*2,
+fall cap 120 -> 80.
 """
 import rules_model as rm
 
@@ -32,11 +37,15 @@ COLLAPSE_GONE = round(85 * 59 / 50)     # 100
 DEAD_FRAMES = rm.DEAD_FRAMES_NEO        # 118
 
 
+FALL_CAP = 80               # 120 x 2/3 (Dome-scenery Task 2's pixel scale)
+
+
 def vectrex_fall(g):
-    """e-srg.c: if (fall + (g >> 3) <= 120) fall += g >> 3, for each g."""
+    """e-srg.c: if (fall + (g >> 3) <= 120) fall += g >> 3, for each g —
+    with the 2/3 pixel scale the cap is 80."""
     fall = 0
     for q in range(0, g + 1):
-        if fall + (q >> 3) <= 120:
+        if fall + (q >> 3) <= FALL_CAP:
             fall += q >> 3
     return fall
 
@@ -49,7 +58,7 @@ def collapse(dead_t, dome_dead):
     if f >= COLLAPSE_GONE:
         return (0, 0, 0, 0, 0)
     if f < COLLAPSE_SHAKE:
-        shake = 3 if f < 8 else 7 if f < 16 else 15 if f < 26 else 31
+        shake = 2 if f < 8 else 5 if f < 16 else 10 if f < 26 else 21
         return (1, shake, 0, 0, 0)
     g = f - COLLAPSE_SHAKE
-    return (1, 31, g * 3, vectrex_fall(g), g)
+    return (1, 21, g * 2, vectrex_fall(g), g)

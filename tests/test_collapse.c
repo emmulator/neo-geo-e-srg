@@ -12,12 +12,18 @@
  *   COLLAPSE_GONE  = 85 x 59/50 = 100.3 -> 100 frames: from then the dome
  *     is not drawn (DEAD_FRAMES 118: the last 18 frames it is simply gone,
  *     as on the Vectrex)
- * So f = 0..40 shakes (shake ramps 3, 7, 15, 31 at f = 8, 16, 26), and
- * g = f - 41 = 0..58 is the fall: burst = g*3 (the runs fly apart),
- * fall = the Vectrex's incremental sum of g>>3 capped at 120, dim = g (the
- * palette fade runs the whole fall and reaches black as it ends). At
- * f >= 100 every effect is 0 and the dome is not drawn — the Vectrex
- * zeroes its four effect variables whenever the collapse is off or done. */
+ * So f = 0..40 shakes, and g = f - 41 = 0..58 is the fall: burst = g*2
+ * (the runs fly apart), fall = the Vectrex's incremental sum of g>>3
+ * capped at 80, dim = g (the palette fade runs the whole fall and reaches
+ * black as it ends). At f >= 100 every effect is 0 and the dome is not
+ * drawn — the Vectrex zeroes its four effect variables whenever the
+ * collapse is off or done.
+ *
+ * Dome-scenery Task 2: the shake, spread and fall were sized to the full
+ * 176x128 dome by hand; they scale by 2/3 (the Vectrex's own pixel
+ * quantities, not frame counts): shake ramps 3/7/15/31 -> 2/5/10/21,
+ * spread 2 -> 1, fall cap 120 -> 80. The frame counts (41/100/118) are
+ * unchanged. */
 #include <stdio.h>
 #include "rules.h"
 
@@ -63,13 +69,14 @@ static void dome_death(rules_t *r, ship_t *s, mis_t *m)
 }
 
 /* the Vectrex's fall accumulator, applied to g = 0..gmax (e-srg.c:
- * if (fall + (g >> 3) <= 120) fall += g >> 3, each g) */
+ * if (fall + (g >> 3) <= 120) fall += g >> 3, each g), with Task 2's
+ * pixel scale: the cap is 120 x 2/3 = 80 */
 static u8 vectrex_fall(u8 gmax)
 {
     u8 g, fall = 0;
 
     for (g = 0; g <= gmax; g++)
-        if (fall + (g >> 3) <= 120)
+        if (fall + (g >> 3) <= 80)
             fall = (u8)(fall + (g >> 3));
     return fall;
 }
@@ -96,14 +103,14 @@ int main(void)
 
         if (fr < COLLAPSE_SHAKE) {
             CHECK(collapse_state(&r) == 2);
-            CHECK(collapse_shake(&r) == (fr < 8 ? 3 : fr < 16 ? 7 : fr < 26 ? 15 : 31));
+            CHECK(collapse_shake(&r) == (fr < 8 ? 2 : fr < 16 ? 5 : fr < 26 ? 10 : 21));
             CHECK(collapse_burst(&r) == 0 && collapse_fall(&r) == 0 && collapse_dim(&r) == 0);
         } else if (fr < COLLAPSE_GONE) {
             u8 g = (u8)(fr - COLLAPSE_SHAKE);
 
             CHECK(collapse_state(&r) == 2);
-            CHECK(collapse_shake(&r) == 31);
-            CHECK(collapse_burst(&r) == (u8)(g * 3));
+            CHECK(collapse_shake(&r) == 21);
+            CHECK(collapse_burst(&r) == (u8)(g * 2));
             CHECK(collapse_fall(&r) == vectrex_fall(g));
             CHECK(collapse_dim(&r) == g);
         } else {
@@ -124,7 +131,8 @@ int main(void)
 
     /* ---- the C's fall must be the Vectrex's accumulator at every g ----
      * (a closed form is fine, but it must agree with e-srg.c's increment
-     * sum of g>>3, capped at 120, for every g the fall runs) */
+     * sum of g>>3, capped at 80 after Task 2's 2/3 pixel scale, for every
+     * g the fall runs) */
     dome_death(&r, &s, &m);
     for (f = 0; f < COLLAPSE_GONE + 5; f++) {
         u8 fr = collapse_frac(&r);

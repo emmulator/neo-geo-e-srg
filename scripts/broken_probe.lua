@@ -46,6 +46,12 @@ local out = os.getenv("OUT")
 local angle = tonumber(os.getenv("CRACK_ANGLE") or "0")
 local angle_addr = tonumber(os.getenv("CRACK_ANGLE_ADDR") or "0")
 local rules_addr = tonumber(os.getenv("CRACK_RULES_ADDR") or "0")
+-- dome-scenery Task 12: the props follow the CAMERA (ship.dome_angle, the
+-- first byte of the ship struct), not cracks_show's test-only overlay
+-- override. The checker needs both to composite the picture: `F`'s da is
+-- the overlays' angle, `P`'s is the props'/dome's. SHIP_ADDR is the cart
+-- BSS `ship`'s address (from the crack-test ELF); 0 = not dumped.
+local ship_addr = tonumber(os.getenv("SHIP_ADDR") or "0")
 
 -- the one sprite slot map (M5 Task 1): src/slots.h -> build/slots.lua
 local S = dofile((os.getenv("REPO") or ".") .. "/build/slots.lua")
@@ -57,6 +63,11 @@ local SHIP, SHIP_END = S.SHIP_SPRITE, S.SHIP_SPRITE + S.SHIP_COUNT - 1
 local FRONT, FRONT_END = S.MIS_FRONT_SPRITE,
     S.MIS_FRONT_SPRITE + S.MIS_FRONT_COUNT - 1
 local EXPL, EXPL_END = S.EXPL_SPRITE, S.EXPL_SPRITE + S.EXPL_COUNT - 1
+-- dome-scenery Task 5: the ground block is the lowest sprite range and
+-- draws behind everything. The snapshot's pixel-exact compare needs its
+-- tiles too (its picture is the band below the horizon, in the dome box's
+-- lower rows).
+local GROUND, GROUND_END = S.GROUND_SPRITE, S.GROUND_SPRITE + S.GROUND_COUNT - 1
 
 -- VRAM is read (and, by the leftover probe, written) through MAME's own copy
 -- of it, never through the LSPC registers at 0x3c0000/2: writing the address
@@ -136,6 +147,9 @@ local function dump()
         end
     end
     f:write(string.format("F %d %d\n", n, da))
+    if ship_addr ~= 0 then
+        f:write(string.format("P %d %d\n", n, sp:read_u8(ship_addr)))
+    end
     if rules_addr ~= 0 then
         local nb = sp:read_u8(rules_addr + 77)
         local b0 = sp:read_u8(rules_addr + 1)
@@ -147,6 +161,11 @@ local function dump()
                               nb, b0, b1, dt, dd, go))
     end
     read_group(MIS_BEHIND, MIS_BEHIND_END, false)   -- missiles behind the dome
+    read_group(GROUND, GROUND_END, true)             -- dome-scenery Task 5:
+                                                     -- the grass (the lowest
+                                                     -- sprite range; its
+                                                     -- sticky chain needs
+                                                     -- all columns dumped)
     read_group(DOME, DOME_END, true)                 -- the dome box (all
                                                      -- columns; the sticky
                                                      -- followers have SCB3

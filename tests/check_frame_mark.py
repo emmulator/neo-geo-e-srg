@@ -69,14 +69,20 @@ def main():
         return 1
 
     # the worst work span: (end - start) mod 264, over every completed
-    # frame's marks.  Pre-seed records read BSS zeros (all four marks 0);
-    # a real frame's work always spans >= 1 line (start=243, end != start).
-    # The first marked frame (fc 32 in the watched run) seeds start=20/end=132:
-    # the first ng_wait_vblank returned mid-frame because the main-loop
-    # init had just finished, and that frame's span is its true cost too.
+    # play frame's marks.  Pre-seed records read BSS zeros (all four marks
+    # 0); a real frame's work always spans >= 1 line (start=243, end !=
+    # start).  fc 0 is the title and fc 1 is the game-start transition: the
+    # title frame's marks are pre-seed/straddle the entry, and the first
+    # game frame's start is set when the game_begin frame's late
+    # ng_wait_vblank returned (not the steady 243), so its start/end do not
+    # pair into a frame's work span (a negative interval reads as a full
+    # 264-line wrap).  Skip those two one-time init frames; every fc >= 2
+    # row is a steady play frame whose start is 243 and pair correctly.
     worst_collapse = None
     for fc, end, mx, mn, start in records:
         if start == end == 0:
+            continue
+        if fc <= 1:
             continue
         s, e = _vpos(start), _vpos(end)
         span = (e - s) % FRAME_LINES

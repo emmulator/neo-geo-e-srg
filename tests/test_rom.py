@@ -5,12 +5,15 @@ import zipfile
 ROM = os.path.join(os.path.dirname(__file__), "..", "build", "rom")
 SIZES = {
     "esrg-p1.p1": 1048576,
-    "esrg-s1.s1": 16384,
-    "esrg-c1.c1": 2097152,          # 2 MB: the back-to-back content is
-    "esrg-c2.c2": 2097152,          # 1.22 MB (718 KB pre-broken + the packed
-                                    # broken tiles), so 1 MB would not fit
-                                    # (the smallest power of two >= the data;
-                                    # see Makefile's CROMSIZE comment)
+    "esrg-s1.s1": 131072,
+    "esrg-c1.c1": 4194304,          # 4 MB: the back-to-back content is
+    "esrg-c2.c2": 4194304,          # 3,104,960 bytes (48,515 tiles
+                                    # including the 256 BIOS zeros; 48,259
+                                    # game tiles; the 8-heading hovercraft
+                                    # is 20,032 tiles), so 2 MB
+                                    # would not fit (the smallest power of
+                                    # two >= the data; see Makefile's
+                                    # CROMSIZE comment)
     "esrg-m1.m1": 131072,
 }
 
