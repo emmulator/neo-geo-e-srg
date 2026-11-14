@@ -1,0 +1,21 @@
+# The five Vectrex sound effects as ADPCM-A samples (M7 Task 1).
+#
+# Each entry references one resampled WAV; vromtool.py allocates every
+# sample a slot in the 524288-byte V ROM and emits build/samples.inc, the
+# ASM defines (FIRE_START_LSB ... PIP_STOP_MSB) that sound/user_commands.s
+# includes.
+- adpcm_a:
+    name: fire
+    uri: file://build/sfx/fire.wav
+- adpcm_a:
+    name: jump
+    uri: file://build/sfx/jump.wav
+- adpcm_a:
+    name: hit
+    uri: file://build/sfx/hit.wav
+- adpcm_a:
+    name: crack
+    uri: file://build/sfx/crack.wav
+- adpcm_a:
+    name: pip
+    uri: file://build/sfx/pip.wav

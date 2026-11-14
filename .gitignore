@@ -1,0 +1,15 @@
+# build outputs
+build/
+/assets/generated/
+
+# python
+__pycache__/
+*.pyc
+
+# editors / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+/.tasks/
